@@ -11,7 +11,7 @@
       "note": "",
       "status": "Confermata",
       "amount": 30.0,
-      "paid": true,
+      "paid": false,
       "created_by": "staff"
     }
   ]
