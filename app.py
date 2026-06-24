@@ -18,6 +18,7 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 CAPACITY = 4
 APP_TITLE = "Prenotazioni Pilates Reformer"
 LOCAL_DATA_PATH = "data/bookings.json"
+INSTRUCTORS = ["Grazia", "Alice"]
 
 SCHEDULE = {
     0: ["08:30", "09:30", "10:30", "17:00", "18:00", "19:00"],
@@ -92,8 +93,14 @@ def date_key(d: date) -> str:
     return d.isoformat()
 
 
-def week_start(d: date) -> date:
-    return d - timedelta(days=d.weekday())
+def next_working_days(start: date, n: int = 5) -> List[date]:
+    days = []
+    d = start
+    while len(days) < n:
+        if d.weekday() in SCHEDULE:
+            days.append(d)
+        d += timedelta(days=1)
+    return days
 
 
 def new_id() -> str:
@@ -185,6 +192,7 @@ def build_archive_rows(data: Dict[str, Any]) -> pd.DataFrame:
             "Ora": b.get("time"),
             "Nome": b.get("name"),
             "Telefono": b.get("phone"),
+            "Istruttrice": b.get("instructor", ""),
             "Stato": b.get("status"),
             "Importo": amount,
             "Pagato": paid,
@@ -192,8 +200,20 @@ def build_archive_rows(data: Dict[str, Any]) -> pd.DataFrame:
             "Inserita il": b.get("created_at"),
         })
     if not rows:
-        return pd.DataFrame(columns=["Eliminazione", "ID", "Data", "Giorno", "Ora", "Nome", "Telefono", "Stato", "Importo", "Pagato", "Note", "Inserita il"])
+        return pd.DataFrame(columns=["Eliminazione", "ID", "Data", "Giorno", "Ora", "Nome", "Telefono", "Istruttrice", "Stato", "Importo", "Pagato", "Note", "Inserita il"])
     return pd.DataFrame(rows).sort_values(["Data", "Ora", "Nome"])
+
+
+def make_excel(df: pd.DataFrame) -> bytes:
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Archivio")
+        ws = writer.sheets["Archivio"]
+        for col in ws.columns:
+            max_len = max(len(str(cell.value)) if cell.value is not None else 0 for cell in col)
+            ws.column_dimensions[col[0].column_letter].width = min(max(max_len + 2, 10), 35)
+    output.seek(0)
+    return output.getvalue()
 
 
 def make_pdf(df: pd.DataFrame, title: str = "Archivio prenotazioni Pilates") -> bytes:
@@ -201,13 +221,13 @@ def make_pdf(df: pd.DataFrame, title: str = "Archivio prenotazioni Pilates") -> 
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=0.8 * cm, leftMargin=0.8 * cm, topMargin=0.8 * cm, bottomMargin=0.8 * cm)
     styles = getSampleStyleSheet()
     elements = [Paragraph(title, styles["Title"]), Paragraph(f"Generato il {datetime.now().strftime('%d/%m/%Y %H:%M')}", styles["Normal"]), Spacer(1, 0.4 * cm)]
-    visible_cols = ["Data", "Giorno", "Ora", "Nome", "Telefono", "Stato", "Importo", "Pagato", "Note"]
+    visible_cols = ["Data", "Giorno", "Ora", "Nome", "Telefono", "Istruttrice", "Stato", "Importo", "Pagato", "Note"]
     pdf_df = df[visible_cols].copy() if not df.empty else pd.DataFrame(columns=visible_cols)
     pdf_df["Pagato"] = pdf_df["Pagato"].map(lambda x: "Sì" if bool(x) else "No")
     pdf_df["Importo"] = pdf_df["Importo"].map(lambda x: f"€ {money(x):.2f}")
     pdf_df = pdf_df.fillna("").astype(str)
     table_data = [visible_cols] + pdf_df.values.tolist()
-    table = Table(table_data, repeatRows=1, colWidths=[2.0*cm, 2.0*cm, 1.3*cm, 4.2*cm, 2.6*cm, 2.2*cm, 1.8*cm, 1.5*cm, 6.4*cm])
+    table = Table(table_data, repeatRows=1, colWidths=[1.8*cm, 1.8*cm, 1.2*cm, 3.4*cm, 2.4*cm, 2.0*cm, 1.8*cm, 1.5*cm, 1.3*cm, 5.8*cm])
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f5c8f")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
@@ -259,9 +279,11 @@ tab1, tab2, tab3, tab4 = st.tabs(["📅 Settimana", "➕ Prenota", "🔎 Cerca c
 
 with tab1:
     st.subheader("Vista settimanale")
-    selected = st.date_input("Scegli una data della settimana", value=date.today(), format="DD/MM/YYYY")
-    start = week_start(parse_date(selected))
-    days = [start + timedelta(days=i) for i in range(5)]
+    today = date.today()
+    selected = st.date_input("Scegli la data di partenza", value=today, min_value=today, format="DD/MM/YYYY")
+    selected = max(parse_date(selected), today)
+    days = next_working_days(selected, 5)
+    st.caption("La vista parte da oggi e mostra solo date future, senza date passate.")
     for d in days:
         st.markdown(f"### {DAY_NAMES[d.weekday()]} {d.strftime('%d/%m/%Y')}")
         cols = st.columns(3)
@@ -277,7 +299,8 @@ with tab1:
                     st.success(label)
                 for i, b in enumerate(conf, 1):
                     paid_txt = "pagato" if bool(b.get("paid", False)) else "non pagato"
-                    st.write(f"{i}. {b.get('name','')} · {b.get('phone','')} · € {money(b.get('amount', 0)):.2f} · {paid_txt}")
+                    istr = b.get("instructor", "")
+                    st.write(f"{i}. {b.get('name','')} · {istr} · € {money(b.get('amount', 0)):.2f} · {paid_txt}")
                 if not conf:
                     st.caption("Nessun prenotato")
                 if wait:
@@ -289,7 +312,7 @@ with tab1:
                     if not rows:
                         st.caption("Nessuna prenotazione da gestire.")
                     for b in rows:
-                        st.markdown(f"**{status_icon(b.get('status'))} {b.get('name','')}** — {b.get('phone','')}")
+                        st.markdown(f"**{status_icon(b.get('status'))} {b.get('name','')}** — {b.get('phone','')} — {b.get('instructor','')}")
                         c1, c2, c3 = st.columns(3)
                         with c1:
                             if st.button("Conferma", key=f"confirm_{b['id']}"):
@@ -309,9 +332,10 @@ with tab1:
 
 with tab2:
     st.subheader("Nuova prenotazione")
+    today = date.today()
     c1, c2 = st.columns(2)
     with c1:
-        d = st.date_input("Data", value=date.today(), format="DD/MM/YYYY", key="new_date")
+        d = st.date_input("Data", value=today, min_value=today, format="DD/MM/YYYY", key="new_date")
     d = parse_date(d)
     times = available_times_for_day(d)
     if not times:
@@ -325,11 +349,13 @@ with tab2:
             st.warning("Lezione piena: il nuovo inserimento andrà automaticamente in lista d'attesa.")
         name = st.text_input("Nome cliente")
         phone = st.text_input("Telefono")
-        c3, c4 = st.columns(2)
+        c3, c4, c5 = st.columns(3)
         with c3:
             amount = st.number_input("Importo (€)", min_value=0.0, value=0.0, step=1.0, format="%.2f")
         with c4:
             paid = st.checkbox("Pagato")
+        with c5:
+            instructor = st.selectbox("Istruttrice", INSTRUCTORS)
         note = st.text_area("Note", placeholder="es. recupero, prova, eventuali indicazioni")
         proposed = auto_status(data, d, t)
         st.info(f"Stato automatico: {proposed}")
@@ -338,18 +364,11 @@ with tab2:
                 st.error("Inserisci il nome.")
             else:
                 booking = {
-                    "id": new_id(),
-                    "created_at": datetime.now().isoformat(timespec="seconds"),
-                    "date": date_key(d),
-                    "day": DAY_NAMES[d.weekday()],
-                    "time": t,
-                    "name": name.strip(),
-                    "phone": phone.strip(),
-                    "note": note.strip(),
-                    "status": auto_status(data, d, t),
-                    "amount": money(amount),
-                    "paid": bool(paid),
-                    "created_by": "staff",
+                    "id": new_id(), "created_at": datetime.now().isoformat(timespec="seconds"),
+                    "date": date_key(d), "day": DAY_NAMES[d.weekday()], "time": t,
+                    "name": name.strip(), "phone": phone.strip(), "note": note.strip(),
+                    "status": auto_status(data, d, t), "amount": money(amount), "paid": bool(paid),
+                    "instructor": instructor, "created_by": "staff",
                 }
                 data["bookings"].append(booking)
                 try:
@@ -369,8 +388,8 @@ with tab3:
             if query in haystack:
                 rows.append({
                     "Data": b.get("date"), "Giorno": b.get("day"), "Ora": b.get("time"), "Nome": b.get("name"),
-                    "Telefono": b.get("phone"), "Stato": b.get("status"), "Importo": money(b.get("amount", 0)),
-                    "Pagato": bool(b.get("paid", False)), "Note": b.get("note"),
+                    "Telefono": b.get("phone"), "Istruttrice": b.get("instructor", ""), "Stato": b.get("status"),
+                    "Importo": money(b.get("amount", 0)), "Pagato": bool(b.get("paid", False)), "Note": b.get("note"),
                 })
     if query and rows:
         st.dataframe(pd.DataFrame(rows).sort_values(["Data", "Ora"]), use_container_width=True, hide_index=True)
@@ -387,7 +406,6 @@ with tab4:
         month_prefix = parse_date(month).strftime("%Y-%m")
         df_month = df_all[df_all["Data"].astype(str).str.startswith(month_prefix)].copy()
         df_month["Importo"] = pd.to_numeric(df_month["Importo"], errors="coerce").fillna(0.0)
-
         total = float(df_month["Importo"].sum())
         paid_total = float(df_month.loc[df_month["Pagato"] == True, "Importo"].sum())
         unpaid_total = total - paid_total
@@ -395,37 +413,24 @@ with tab4:
         c1.metric("Totale complessivo", f"€ {total:.2f}")
         c2.metric("Totale pagato", f"€ {paid_total:.2f}")
         c3.metric("Totale non pagato", f"€ {unpaid_total:.2f}")
-
         c4, c5, c6 = st.columns(3)
         c4.metric("Confermate mese", int((df_month["Stato"] == "Confermata").sum()))
         c5.metric("Lista attesa mese", int((df_month["Stato"] == "Lista attesa").sum()))
         c6.metric("Annullate mese", int((df_month["Stato"] == "Annullata").sum()))
-
         unpaid = df_month[(df_month["Pagato"] == False) & (df_month["Importo"] > 0) & (df_month["Stato"] != "Annullata")]
         if not unpaid.empty:
             st.warning("Clienti con importo non pagato: " + ", ".join(unpaid["Nome"].fillna("").astype(str).unique()))
-
         status_filter = st.multiselect("Filtra stato", ["Confermata", "Lista attesa", "Annullata"], default=["Confermata", "Lista attesa"])
         df = df_all.copy()
         if status_filter:
             df = df[df["Stato"].isin(status_filter)]
-
         st.caption("Puoi modificare Importo/Pagato direttamente nella tabella. Per cancellare, spunta Eliminazione e poi clicca il pulsante sotto.")
-        editor_cols = ["Eliminazione", "Data", "Giorno", "Ora", "Nome", "Telefono", "Stato", "Importo", "Pagato", "Note", "Inserita il", "ID"]
+        editor_cols = ["Eliminazione", "Data", "Giorno", "Ora", "Nome", "Telefono", "Istruttrice", "Stato", "Importo", "Pagato", "Note", "Inserita il", "ID"]
         edited = st.data_editor(
-            df[editor_cols],
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Eliminazione": st.column_config.CheckboxColumn("Eliminazione"),
-                "Pagato": st.column_config.CheckboxColumn("Pagato"),
-                "Importo": st.column_config.NumberColumn("Importo (€)", min_value=0.0, step=1.0, format="%.2f"),
-                "ID": None,
-            },
-            disabled=["Data", "Giorno", "Ora", "Nome", "Telefono", "Stato", "Note", "Inserita il"],
-            key="archive_editor",
+            df[editor_cols], use_container_width=True, hide_index=True,
+            column_config={"Eliminazione": st.column_config.CheckboxColumn("Eliminazione"), "Pagato": st.column_config.CheckboxColumn("Pagato"), "Importo": st.column_config.NumberColumn("Importo (€)", min_value=0.0, step=1.0, format="%.2f"), "ID": None},
+            disabled=["Data", "Giorno", "Ora", "Nome", "Telefono", "Istruttrice", "Stato", "Note", "Inserita il"], key="archive_editor",
         )
-
         col_a, col_b = st.columns(2)
         with col_a:
             if st.button("Salva modifiche importi/pagamenti"):
@@ -452,12 +457,11 @@ with tab4:
                         st.rerun()
                     except Exception as e:
                         st.error(f"Errore salvataggio: {e}")
-
         visible_df = edited.drop(columns=["Eliminazione", "ID"], errors="ignore")
-        csv = visible_df.to_csv(index=False).encode("utf-8-sig")
+        excel_bytes = make_excel(visible_df)
         pdf_bytes = make_pdf(visible_df, title="Archivio prenotazioni Pilates - Body Center")
         d1, d2 = st.columns(2)
         with d1:
-            st.download_button("Scarica Excel/CSV", data=csv, file_name="prenotazioni_pilates.csv", mime="text/csv")
+            st.download_button("Scarica Excel", data=excel_bytes, file_name="prenotazioni_pilates.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         with d2:
             st.download_button("Scarica PDF archivio", data=pdf_bytes, file_name="archivio_prenotazioni_pilates.pdf", mime="application/pdf")
