@@ -44,6 +44,21 @@
       "paid": false,
       "instructor": "Grazia",
       "created_by": "staff"
+    },
+    {
+      "id": "20260624224446439894",
+      "created_at": "2026-06-24T22:44:46",
+      "date": "2026-07-01",
+      "day": "Mercoledì",
+      "time": "17:30",
+      "name": "Elisa Grosso",
+      "phone": "3482768714",
+      "note": "",
+      "status": "Confermata",
+      "amount": 30.0,
+      "paid": false,
+      "instructor": "Grazia",
+      "created_by": "staff"
     }
   ]
 }
