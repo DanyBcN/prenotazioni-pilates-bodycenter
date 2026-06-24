@@ -13,13 +13,14 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import cm
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 CAPACITY = 4
 APP_TITLE = "Prenotazioni Pilates Reformer"
 LOCAL_DATA_PATH = "data/bookings.json"
+LOGO_PATH = "assets/logo.png"
 INSTRUCTORS = ["Grazia", "Alice"]
-GREEN = "#52A68A"
+GREEN = "#496744"
 DARK = "#243142"
 
 SCHEDULE = {
@@ -30,24 +31,6 @@ SCHEDULE = {
     4: ["14:00", "15:00", "16:00", "17:00", "18:00", "19:00"],
 }
 DAY_NAMES = {0: "Lunedì", 1: "Martedì", 2: "Mercoledì", 3: "Giovedì", 4: "Venerdì", 5: "Sabato", 6: "Domenica"}
-
-
-def render_logo_header() -> None:
-    st.markdown(
-        f"""
-        <div style="display:flex; align-items:center; gap:18px; margin-bottom:4px;">
-          <div style="width:96px; height:72px; background:{GREEN}; border-radius:50%; display:flex; flex-direction:column; align-items:center; justify-content:center; color:white; font-weight:900; letter-spacing:-2px; line-height:0.85; box-shadow:0 2px 10px rgba(0,0,0,.10);">
-            <div style="font-size:26px;">BODY</div>
-            <div style="font-size:20px; transform:skew(-10deg);">CENTER</div>
-          </div>
-          <div>
-            <div style="font-size:42px; font-weight:800; color:{DARK}; line-height:1.1;">Prenotazioni Pilates Reformer</div>
-            <div style="font-size:14px; color:#777; margin-top:6px;">Gestionale interno Body Center · uso staff · capienza massima 4 persone</div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
 
 def get_secret(name: str, default: str = "") -> str:
@@ -62,7 +45,11 @@ def github_enabled() -> bool:
 
 
 def github_headers() -> Dict[str, str]:
-    return {"Authorization": f"Bearer {get_secret('GITHUB_TOKEN')}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+    return {
+        "Authorization": f"Bearer {get_secret('GITHUB_TOKEN')}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
 
 
 def github_file_url() -> str:
@@ -71,7 +58,12 @@ def github_file_url() -> str:
 
 def load_data() -> Tuple[Dict[str, Any], str | None]:
     if github_enabled():
-        r = requests.get(github_file_url(), headers=github_headers(), params={"ref": get_secret("GITHUB_BRANCH", "main")}, timeout=20)
+        r = requests.get(
+            github_file_url(),
+            headers=github_headers(),
+            params={"ref": get_secret("GITHUB_BRANCH", "main")},
+            timeout=20,
+        )
         if r.status_code == 404:
             data = {"bookings": []}
             save_data(data, sha=None, message="Initialize bookings storage")
@@ -106,7 +98,7 @@ def save_data(data: Dict[str, Any], sha: str | None = None, message: str = "Upda
 def parse_date(d: date | str) -> date:
     if isinstance(d, date):
         return d
-    return datetime.strptime(d, "%Y-%m-%d").date()
+    return datetime.strptime(str(d), "%Y-%m-%d").date()
 
 
 def date_key(d: date) -> str:
@@ -148,7 +140,10 @@ def get_bookings_for_slot(data: Dict[str, Any], d: date, time: str, include_canc
 
 
 def confirmed_count(data: Dict[str, Any], d: date, time: str, exclude_id: str | None = None) -> int:
-    return sum(1 for b in get_bookings_for_slot(data, d, time) if b.get("status") == "Confermata" and b.get("id") != exclude_id)
+    return sum(
+        1 for b in get_bookings_for_slot(data, d, time)
+        if b.get("status") == "Confermata" and b.get("id") != exclude_id
+    )
 
 
 def slot_status(data: Dict[str, Any], d: date, time: str) -> Tuple[int, int, List[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -178,6 +173,16 @@ def login() -> bool:
     return False
 
 
+def render_header() -> None:
+    c_logo, c_title = st.columns([1, 6])
+    with c_logo:
+        if Path(LOGO_PATH).exists():
+            st.image(LOGO_PATH, width=130)
+    with c_title:
+        st.markdown(f"<h1 style='margin-bottom:0;color:{DARK};'>Prenotazioni Pilates Reformer</h1>", unsafe_allow_html=True)
+        st.caption("Gestionale interno Body Center · uso staff · capienza massima 4 persone")
+
+
 def change_status(data: Dict[str, Any], booking_id: str, new_status: str) -> bool:
     for b in data.get("bookings", []):
         if b.get("id") == booking_id:
@@ -202,8 +207,6 @@ def delete_bookings(data: Dict[str, Any], ids: List[str]) -> int:
 def build_archive_rows(data: Dict[str, Any]) -> pd.DataFrame:
     rows = []
     for b in data.get("bookings", []):
-        amount = money(b.get("amount", 0))
-        paid = bool(b.get("paid", False))
         rows.append({
             "Eliminazione": False,
             "ID": b.get("id"),
@@ -214,20 +217,20 @@ def build_archive_rows(data: Dict[str, Any]) -> pd.DataFrame:
             "Telefono": b.get("phone"),
             "Istruttrice": b.get("instructor", ""),
             "Stato": b.get("status"),
-            "Importo": amount,
-            "Pagato": paid,
+            "Importo": money(b.get("amount", 0)),
+            "Pagato": bool(b.get("paid", False)),
             "Note": b.get("note"),
             "Inserita il": b.get("created_at"),
         })
+    cols = ["Eliminazione", "ID", "Data", "Giorno", "Ora", "Nome", "Telefono", "Istruttrice", "Stato", "Importo", "Pagato", "Note", "Inserita il"]
     if not rows:
-        return pd.DataFrame(columns=["Eliminazione", "ID", "Data", "Giorno", "Ora", "Nome", "Telefono", "Istruttrice", "Stato", "Importo", "Pagato", "Note", "Inserita il"])
+        return pd.DataFrame(columns=cols)
     return pd.DataFrame(rows).sort_values(["Data", "Ora", "Nome"])
 
 
 def payment_summary(df: pd.DataFrame) -> Tuple[float, float, float, pd.DataFrame]:
     if df.empty:
-        per_instr = pd.DataFrame(columns=["Istruttrice", "Totale", "Pagato", "Non pagato"])
-        return 0.0, 0.0, 0.0, per_instr
+        return 0.0, 0.0, 0.0, pd.DataFrame(columns=["Istruttrice", "Totale", "Pagato", "Non pagato"])
     work = df.copy()
     work["Importo"] = pd.to_numeric(work["Importo"], errors="coerce").fillna(0.0)
     work["Pagato"] = work["Pagato"].astype(bool)
@@ -256,49 +259,50 @@ def make_excel(df: pd.DataFrame) -> bytes:
     return output.getvalue()
 
 
-def make_pdf(df: pd.DataFrame, title: str = "Archivio prenotazioni Pilates") -> bytes:
+def make_pdf(df: pd.DataFrame, title: str = "Archivio prenotazioni Pilates - Body Center") -> bytes:
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=0.8 * cm, leftMargin=0.8 * cm, topMargin=0.8 * cm, bottomMargin=0.8 * cm)
     styles = getSampleStyleSheet()
     total, paid_total, unpaid_total, per_instr = payment_summary(df)
-    elements = [
-        Paragraph(f"<font color='{GREEN}'><b>BODY CENTER</b></font>", styles["Title"]),
-        Paragraph(title, styles["Heading1"]),
+    elements = []
+    if Path(LOGO_PATH).exists():
+        img = Image(LOGO_PATH, width=2.1 * cm, height=3.2 * cm)
+        elements.append(img)
+    elements += [
+        Paragraph(title, styles["Title"]),
         Paragraph(f"Generato il {datetime.now().strftime('%d/%m/%Y %H:%M')}", styles["Normal"]),
         Spacer(1, 0.25 * cm),
     ]
-    totals_data = [
-        ["Totale complessivo", "Totale pagato", "Totale non pagato"],
-        [f"€ {total:.2f}", f"€ {paid_total:.2f}", f"€ {unpaid_total:.2f}"],
-    ]
-    totals_table = Table(totals_data, colWidths=[5 * cm, 5 * cm, 5 * cm])
+    totals_table = Table(
+        [["Totale complessivo", "Totale pagato", "Totale non pagato"], [f"€ {total:.2f}", f"€ {paid_total:.2f}", f"€ {unpaid_total:.2f}"]],
+        colWidths=[5 * cm, 5 * cm, 5 * cm],
+    )
     totals_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#52A68A")),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(GREEN)),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
         ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
     ]))
-    elements += [totals_table, Spacer(1, 0.25 * cm)]
+    elements += [totals_table, Spacer(1, 0.25 * cm), Paragraph("Totali per istruttrice", styles["Heading2"])]
     instr_data = [["Istruttrice", "Totale", "Pagato", "Non pagato"]] + [[r["Istruttrice"], f"€ {r['Totale']:.2f}", f"€ {r['Pagato']:.2f}", f"€ {r['Non pagato']:.2f}"] for _, r in per_instr.iterrows()]
     instr_table = Table(instr_data, colWidths=[4 * cm, 4 * cm, 4 * cm, 4 * cm])
     instr_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#243142")),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(DARK)),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
         ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
     ]))
-    elements += [Paragraph("Totali per istruttrice", styles["Heading2"]), instr_table, Spacer(1, 0.35 * cm)]
+    elements += [instr_table, Spacer(1, 0.35 * cm)]
     visible_cols = ["Data", "Giorno", "Ora", "Nome", "Telefono", "Istruttrice", "Stato", "Importo", "Pagato", "Note"]
     pdf_df = df[visible_cols].copy() if not df.empty else pd.DataFrame(columns=visible_cols)
     pdf_df["Pagato"] = pdf_df["Pagato"].map(lambda x: "Sì" if bool(x) else "No")
     pdf_df["Importo"] = pdf_df["Importo"].map(lambda x: f"€ {money(x):.2f}")
     pdf_df = pdf_df.fillna("").astype(str)
-    table_data = [visible_cols] + pdf_df.values.tolist()
-    table = Table(table_data, repeatRows=1, colWidths=[1.8*cm, 1.8*cm, 1.2*cm, 3.4*cm, 2.4*cm, 2.0*cm, 1.8*cm, 1.5*cm, 1.3*cm, 5.8*cm])
+    table = Table([visible_cols] + pdf_df.values.tolist(), repeatRows=1, colWidths=[1.8*cm, 1.8*cm, 1.2*cm, 3.4*cm, 2.4*cm, 2.0*cm, 1.8*cm, 1.5*cm, 1.3*cm, 5.8*cm])
     table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f5c8f")),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(GREEN)),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, -1), 7),
@@ -328,7 +332,7 @@ def update_payment_from_editor(data: Dict[str, Any], edited_df: pd.DataFrame) ->
 
 
 st.set_page_config(page_title=APP_TITLE, page_icon="🧘", layout="wide")
-render_logo_header()
+render_header()
 
 if not github_enabled():
     st.warning("Modalità locale: utile per prova. Per usarla online con tua socia, configura i Secrets GitHub su Streamlit.")
@@ -367,8 +371,7 @@ with tab1:
                     st.success(label)
                 for i, b in enumerate(conf, 1):
                     paid_txt = "pagato" if bool(b.get("paid", False)) else "non pagato"
-                    istr = b.get("instructor", "")
-                    st.write(f"{i}. {b.get('name','')} · {istr} · € {money(b.get('amount', 0)):.2f} · {paid_txt}")
+                    st.write(f"{i}. {b.get('name','')} · {b.get('instructor','')} · € {money(b.get('amount', 0)):.2f} · {paid_txt}")
                 if not conf:
                     st.caption("Nessun prenotato")
                 if wait:
@@ -431,7 +434,21 @@ with tab2:
             if not name.strip():
                 st.error("Inserisci il nome.")
             else:
-                booking = {"id": new_id(), "created_at": datetime.now().isoformat(timespec="seconds"), "date": date_key(d), "day": DAY_NAMES[d.weekday()], "time": t, "name": name.strip(), "phone": phone.strip(), "note": note.strip(), "status": auto_status(data, d, t), "amount": money(amount), "paid": bool(paid), "instructor": instructor, "created_by": "staff"}
+                booking = {
+                    "id": new_id(),
+                    "created_at": datetime.now().isoformat(timespec="seconds"),
+                    "date": date_key(d),
+                    "day": DAY_NAMES[d.weekday()],
+                    "time": t,
+                    "name": name.strip(),
+                    "phone": phone.strip(),
+                    "note": note.strip(),
+                    "status": auto_status(data, d, t),
+                    "amount": money(amount),
+                    "paid": bool(paid),
+                    "instructor": instructor,
+                    "created_by": "staff",
+                }
                 data["bookings"].append(booking)
                 try:
                     save_data(data, sha, f"Add booking {booking['name']} {booking['date']} {booking['time']}")
@@ -483,7 +500,19 @@ with tab4:
             df = df[df["Stato"].isin(status_filter)]
         st.caption("L'archivio mostra tutte le prenotazioni, comprese quelle passate. Puoi modificare Importo/Pagato e cancellare righe selezionate.")
         editor_cols = ["Eliminazione", "Data", "Giorno", "Ora", "Nome", "Telefono", "Istruttrice", "Stato", "Importo", "Pagato", "Note", "Inserita il", "ID"]
-        edited = st.data_editor(df[editor_cols], use_container_width=True, hide_index=True, column_config={"Eliminazione": st.column_config.CheckboxColumn("Eliminazione"), "Pagato": st.column_config.CheckboxColumn("Pagato"), "Importo": st.column_config.NumberColumn("Importo (€)", min_value=0.0, step=1.0, format="%.2f"), "ID": None}, disabled=["Data", "Giorno", "Ora", "Nome", "Telefono", "Istruttrice", "Stato", "Note", "Inserita il"], key="archive_editor")
+        edited = st.data_editor(
+            df[editor_cols],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Eliminazione": st.column_config.CheckboxColumn("Eliminazione"),
+                "Pagato": st.column_config.CheckboxColumn("Pagato"),
+                "Importo": st.column_config.NumberColumn("Importo (€)", min_value=0.0, step=1.0, format="%.2f"),
+                "ID": None,
+            },
+            disabled=["Data", "Giorno", "Ora", "Nome", "Telefono", "Istruttrice", "Stato", "Note", "Inserita il"],
+            key="archive_editor",
+        )
         col_a, col_b = st.columns(2)
         with col_a:
             if st.button("Salva modifiche importi/pagamenti"):
@@ -512,7 +541,7 @@ with tab4:
                         st.error(f"Errore salvataggio: {e}")
         visible_df = edited.drop(columns=["Eliminazione", "ID"], errors="ignore")
         excel_bytes = make_excel(visible_df)
-        pdf_bytes = make_pdf(visible_df, title="Archivio prenotazioni Pilates - Body Center")
+        pdf_bytes = make_pdf(visible_df)
         d1, d2 = st.columns(2)
         with d1:
             st.download_button("Scarica Excel", data=excel_bytes, file_name="prenotazioni_pilates.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
