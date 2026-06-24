@@ -25,7 +25,7 @@
       "note": "",
       "status": "Confermata",
       "amount": 30.0,
-      "paid": true,
+      "paid": false,
       "instructor": "Grazia",
       "created_by": "staff"
     }
