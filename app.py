@@ -2,12 +2,18 @@ import base64
 import json
 import os
 from datetime import date, datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 import requests
 import streamlit as st
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import cm
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 
 CAPACITY = 4
@@ -167,6 +173,69 @@ def change_status(data: Dict[str, Any], booking_id: str, new_status: str) -> boo
     return False
 
 
+def delete_booking(data: Dict[str, Any], booking_id: str) -> bool:
+    old_len = len(data.get("bookings", []))
+    data["bookings"] = [b for b in data.get("bookings", []) if b.get("id") != booking_id]
+    return len(data["bookings"]) < old_len
+
+
+def build_archive_rows(data: Dict[str, Any]) -> pd.DataFrame:
+    rows = []
+    for b in data.get("bookings", []):
+        rows.append({
+            "ID": b.get("id"),
+            "Data": b.get("date"),
+            "Giorno": b.get("day"),
+            "Ora": b.get("time"),
+            "Nome": b.get("name"),
+            "Telefono": b.get("phone"),
+            "Stato": b.get("status"),
+            "Note": b.get("note"),
+            "Inserita il": b.get("created_at"),
+        })
+    if not rows:
+        return pd.DataFrame(columns=["ID", "Data", "Giorno", "Ora", "Nome", "Telefono", "Stato", "Note", "Inserita il"])
+    return pd.DataFrame(rows).sort_values(["Data", "Ora", "Nome"])
+
+
+def make_pdf(df: pd.DataFrame, title: str = "Archivio prenotazioni Pilates") -> bytes:
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(A4),
+        rightMargin=0.8 * cm,
+        leftMargin=0.8 * cm,
+        topMargin=0.8 * cm,
+        bottomMargin=0.8 * cm,
+    )
+    styles = getSampleStyleSheet()
+    elements = [
+        Paragraph(title, styles["Title"]),
+        Paragraph(f"Generato il {datetime.now().strftime('%d/%m/%Y %H:%M')}", styles["Normal"]),
+        Spacer(1, 0.4 * cm),
+    ]
+
+    visible_cols = ["Data", "Giorno", "Ora", "Nome", "Telefono", "Stato", "Note"]
+    pdf_df = df[visible_cols].copy() if not df.empty else pd.DataFrame(columns=visible_cols)
+    pdf_df = pdf_df.fillna("").astype(str)
+
+    table_data = [visible_cols] + pdf_df.values.tolist()
+    table = Table(table_data, repeatRows=1, colWidths=[2.2*cm, 2.3*cm, 1.5*cm, 5.0*cm, 3.0*cm, 2.4*cm, 8.0*cm])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f5c8f")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f5f7fa")]),
+    ]))
+    elements.append(table)
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
 st.set_page_config(page_title=APP_TITLE, page_icon="🧘", layout="wide")
 st.title("🧘 Prenotazioni Pilates Reformer")
 st.caption("Gestionale interno Body Center · uso staff · capienza massima 4 persone")
@@ -228,7 +297,7 @@ with tab1:
                         if b.get("note"):
                             st.caption(b.get("note"))
 
-                        c1, c2, c3 = st.columns(3)
+                        c1, c2, c3, c4 = st.columns(4)
                         with c1:
                             if st.button("Conferma", key=f"confirm_{b['id']}"):
                                 if change_status(data, b["id"], "Confermata"):
@@ -243,6 +312,11 @@ with tab1:
                             if st.button("Annulla", key=f"cancel_{b['id']}"):
                                 if change_status(data, b["id"], "Annullata"):
                                     save_data(data, sha, "Annulla prenotazione")
+                                    st.rerun()
+                        with c4:
+                            if st.button("Elimina", key=f"delete_week_{b['id']}"):
+                                if delete_booking(data, b["id"]):
+                                    save_data(data, sha, "Elimina prenotazione")
                                     st.rerun()
 
 
@@ -327,26 +401,14 @@ with tab3:
 with tab4:
     st.subheader("Archivio e statistiche")
 
-    rows = []
-    for b in data.get("bookings", []):
-        rows.append({
-            "Data": b.get("date"),
-            "Giorno": b.get("day"),
-            "Ora": b.get("time"),
-            "Nome": b.get("name"),
-            "Telefono": b.get("phone"),
-            "Stato": b.get("status"),
-            "Note": b.get("note"),
-            "Inserita il": b.get("created_at"),
-        })
+    df_all = build_archive_rows(data)
 
-    if not rows:
+    if df_all.empty:
         st.info("Nessuna prenotazione presente.")
     else:
-        df = pd.DataFrame(rows).sort_values(["Data", "Ora", "Nome"])
         month = st.date_input("Statistiche mese", value=date.today(), format="DD/MM/YYYY", key="stats_month")
         month_prefix = parse_date(month).strftime("%Y-%m")
-        df_month = df[df["Data"].astype(str).str.startswith(month_prefix)]
+        df_month = df_all[df_all["Data"].astype(str).str.startswith(month_prefix)]
 
         c1, c2, c3 = st.columns(3)
         c1.metric("Confermate mese", int((df_month["Stato"] == "Confermata").sum()))
@@ -358,9 +420,47 @@ with tab4:
             ["Confermata", "Lista attesa", "Annullata"],
             default=["Confermata", "Lista attesa"],
         )
+
+        df = df_all.copy()
         if status_filter:
             df = df[df["Stato"].isin(status_filter)]
 
-        st.dataframe(df, use_container_width=True, hide_index=True)
-        csv = df.to_csv(index=False).encode("utf-8-sig")
-        st.download_button("Scarica Excel/CSV", data=csv, file_name="prenotazioni_pilates.csv", mime="text/csv")
+        visible_df = df.drop(columns=["ID"], errors="ignore")
+        st.dataframe(visible_df, use_container_width=True, hide_index=True)
+
+        csv = visible_df.to_csv(index=False).encode("utf-8-sig")
+        pdf_bytes = make_pdf(visible_df, title="Archivio prenotazioni Pilates - Body Center")
+
+        d1, d2 = st.columns(2)
+        with d1:
+            st.download_button("Scarica Excel/CSV", data=csv, file_name="prenotazioni_pilates.csv", mime="text/csv")
+        with d2:
+            st.download_button("Scarica PDF archivio", data=pdf_bytes, file_name="archivio_prenotazioni_pilates.pdf", mime="application/pdf")
+
+        st.markdown("### Elimina prenotazione dall'archivio")
+        st.caption("Seleziona una prenotazione e clicca Elimina definitivamente. L'operazione non è reversibile.")
+
+        labels = []
+        id_by_label = {}
+        for _, row in df.iterrows():
+            label = f"{row['Data']} {row['Ora']} - {row['Nome']} - {row['Telefono']} ({row['Stato']})"
+            labels.append(label)
+            id_by_label[label] = row["ID"]
+
+        if labels:
+            selected_label = st.selectbox("Prenotazione da eliminare", labels)
+            confirm_delete = st.checkbox("Confermo di voler eliminare definitivamente questa prenotazione")
+            if st.button("Elimina definitivamente", type="primary"):
+                if not confirm_delete:
+                    st.error("Spunta la conferma prima di eliminare.")
+                else:
+                    selected_id = id_by_label[selected_label]
+                    if delete_booking(data, selected_id):
+                        try:
+                            save_data(data, sha, "Elimina prenotazione da archivio")
+                            st.success("Prenotazione eliminata.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Errore salvataggio: {e}")
+                    else:
+                        st.error("Prenotazione non trovata.")
