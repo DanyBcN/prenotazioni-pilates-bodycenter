@@ -247,7 +247,7 @@ def filter_period(df: pd.DataFrame, start: date, end: date) -> pd.DataFrame:
 def period_range(option: str) -> Tuple[date, date]:
     today = date.today()
     if option == "Anno in corso":
-        return date(today.year, 1, 1), today
+        return date(today.year, 1, 1), date(today.year, 12, 31)
     if option == "Ultimi 3 mesi":
         return today - timedelta(days=90), today
     if option == "Ultimi 6 mesi":
