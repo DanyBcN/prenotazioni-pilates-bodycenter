@@ -11,6 +11,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+APP_TITLE="Prenotazioni Pilates Reformer"
 CAPACITY=4
 LOCAL_DATA_PATH="data/bookings.json"
 LOGO_PATH="assets/logo.png"
@@ -107,6 +108,7 @@ def slot_rows(data,d,t,include_cancelled=False):
     return sorted([b for b in data.get("bookings",[]) if b.get("date")==date_key(d) and b.get("time")==t and (include_cancelled or b.get("status")!="Annullata")],key=lambda x:x.get("created_at",""))
 def confirmed_count(data,d,t,exclude_id=None): return sum(1 for b in slot_rows(data,d,t) if b.get("status")=="Confermata" and b.get("id")!=exclude_id)
 def auto_status(data,d,t): return "Confermata" if confirmed_count(data,d,t)<CAPACITY else "Lista attesa"
+def status_icon(status): return {"Confermata":"✅","Lista attesa":"⏳","Annullata":"❌"}.get(status,"")
 def slot_status(data,d,t):
     rows=slot_rows(data,d,t); conf=[b for b in rows if b.get("status")=="Confermata"]; wait=[b for b in rows if b.get("status")=="Lista attesa"]
     return len(conf),len(wait),conf,wait
