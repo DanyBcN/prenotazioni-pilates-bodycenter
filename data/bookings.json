@@ -13,20 +13,6 @@
       "amount": 30.0,
       "paid": true,
       "created_by": "staff"
-    },
-    {
-      "id": "20260624213110950620",
-      "created_at": "2026-06-24T21:31:10",
-      "date": "2026-06-25",
-      "day": "Giovedì",
-      "time": "17:00",
-      "name": "Danilo",
-      "phone": "3393121941",
-      "note": "",
-      "status": "Confermata",
-      "amount": 30.0,
-      "paid": true,
-      "created_by": "staff"
     }
   ]
 }
