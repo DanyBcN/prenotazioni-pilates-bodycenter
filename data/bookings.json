@@ -74,6 +74,21 @@
       "paid": false,
       "instructor": "Grazia",
       "created_by": "staff"
+    },
+    {
+      "id": "20260624224845555578",
+      "created_at": "2026-06-24T22:48:45",
+      "date": "2026-07-03",
+      "day": "Venerdì",
+      "time": "14:00",
+      "name": "Roberta Moglie Paolo",
+      "phone": "3495662839",
+      "note": "",
+      "status": "Confermata",
+      "amount": 30.0,
+      "paid": false,
+      "instructor": "Grazia",
+      "created_by": "staff"
     }
   ]
 }
