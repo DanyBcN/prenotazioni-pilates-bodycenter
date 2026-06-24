@@ -59,6 +59,21 @@
       "paid": false,
       "instructor": "Grazia",
       "created_by": "staff"
+    },
+    {
+      "id": "20260624224630933994",
+      "created_at": "2026-06-24T22:46:30",
+      "date": "2026-07-02",
+      "day": "Giovedì",
+      "time": "17:00",
+      "name": "Amica Chiara Marcenaro",
+      "phone": "3483122325",
+      "note": "",
+      "status": "Confermata",
+      "amount": 30.0,
+      "paid": false,
+      "instructor": "Grazia",
+      "created_by": "staff"
     }
   ]
 }
