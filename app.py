@@ -228,9 +228,30 @@ def build_archive_rows(data: Dict[str, Any]) -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values(["Data", "Ora", "Nome"])
 
 
+def filter_period(df: pd.DataFrame, start: date, end: date) -> pd.DataFrame:
+    if df.empty:
+        return df.copy()
+    work = df.copy()
+    dates = pd.to_datetime(work["Data"], errors="coerce").dt.date
+    return work[(dates >= start) & (dates <= end)].copy()
+
+
+def period_range(option: str) -> Tuple[date, date]:
+    today = date.today()
+    if option == "Mese selezionato":
+        return today.replace(day=1), today
+    if option == "Ultimi 3 mesi":
+        return today - timedelta(days=90), today
+    if option == "Ultimi 6 mesi":
+        return today - timedelta(days=180), today
+    if option == "Ultimo anno":
+        return today - timedelta(days=365), today
+    return today.replace(day=1), today
+
+
 def payment_summary(df: pd.DataFrame) -> Tuple[float, float, float, pd.DataFrame]:
     if df.empty:
-        return 0.0, 0.0, 0.0, pd.DataFrame(columns=["Istruttrice", "Totale", "Pagato", "Non pagato"])
+        return 0.0, 0.0, 0.0, pd.DataFrame(columns=["Istruttrice", "Totale complessivo", "Totale pagato", "Totale non pagato"])
     work = df.copy()
     work["Importo"] = pd.to_numeric(work["Importo"], errors="coerce").fillna(0.0)
     work["Pagato"] = work["Pagato"].astype(bool)
@@ -243,7 +264,7 @@ def payment_summary(df: pd.DataFrame) -> Tuple[float, float, float, pd.DataFrame
         sub = work[work["Istruttrice"].fillna("") == instr]
         itotal = float(sub["Importo"].sum())
         ipaid = float(sub.loc[sub["Pagato"] == True, "Importo"].sum())
-        rows.append({"Istruttrice": instr, "Totale": itotal, "Pagato": ipaid, "Non pagato": itotal - ipaid})
+        rows.append({"Istruttrice": instr, "Totale complessivo": itotal, "Totale pagato": ipaid, "Totale non pagato": itotal - ipaid})
     return total, paid_total, unpaid_total, pd.DataFrame(rows)
 
 
@@ -259,7 +280,7 @@ def make_excel(df: pd.DataFrame) -> bytes:
     return output.getvalue()
 
 
-def make_pdf(df: pd.DataFrame, title: str = "Archivio prenotazioni Pilates - Body Center") -> bytes:
+def make_pdf(df: pd.DataFrame, title: str = "Archivio prenotazioni Pilates - Body Center", period_label: str = "") -> bytes:
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=0.8 * cm, leftMargin=0.8 * cm, topMargin=0.8 * cm, bottomMargin=0.8 * cm)
     styles = getSampleStyleSheet()
@@ -270,6 +291,7 @@ def make_pdf(df: pd.DataFrame, title: str = "Archivio prenotazioni Pilates - Bod
         elements.append(img)
     elements += [
         Paragraph(title, styles["Title"]),
+        Paragraph(period_label, styles["Normal"]),
         Paragraph(f"Generato il {datetime.now().strftime('%d/%m/%Y %H:%M')}", styles["Normal"]),
         Spacer(1, 0.25 * cm),
     ]
@@ -285,7 +307,7 @@ def make_pdf(df: pd.DataFrame, title: str = "Archivio prenotazioni Pilates - Bod
         ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
     ]))
     elements += [totals_table, Spacer(1, 0.25 * cm), Paragraph("Totali per istruttrice", styles["Heading2"])]
-    instr_data = [["Istruttrice", "Totale", "Pagato", "Non pagato"]] + [[r["Istruttrice"], f"€ {r['Totale']:.2f}", f"€ {r['Pagato']:.2f}", f"€ {r['Non pagato']:.2f}"] for _, r in per_instr.iterrows()]
+    instr_data = [["Istruttrice", "Totale complessivo", "Totale pagato", "Totale non pagato"]] + [[r["Istruttrice"], f"€ {r['Totale complessivo']:.2f}", f"€ {r['Totale pagato']:.2f}", f"€ {r['Totale non pagato']:.2f}"] for _, r in per_instr.iterrows()]
     instr_table = Table(instr_data, colWidths=[4 * cm, 4 * cm, 4 * cm, 4 * cm])
     instr_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(DARK)),
@@ -477,28 +499,62 @@ with tab4:
     if df_all.empty:
         st.info("Nessuna prenotazione presente.")
     else:
-        month = st.date_input("Statistiche mese", value=date.today(), format="DD/MM/YYYY", key="stats_month")
-        month_prefix = parse_date(month).strftime("%Y-%m")
-        df_month = df_all[df_all["Data"].astype(str).str.startswith(month_prefix)].copy()
-        total, paid_total, unpaid_total, per_instr = payment_summary(df_month)
+        st.markdown("### Periodo statistiche")
+        period_option = st.selectbox(
+            "Scegli periodo",
+            ["Mese selezionato", "Periodo personalizzato", "Ultimi 3 mesi", "Ultimi 6 mesi", "Ultimo anno"],
+        )
+        today = date.today()
+        if period_option == "Mese selezionato":
+            selected_month = st.date_input("Mese di riferimento", value=today, format="DD/MM/YYYY", key="stats_month")
+            m = parse_date(selected_month)
+            period_start = m.replace(day=1)
+            next_month = (period_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+            period_end = next_month - timedelta(days=1)
+        elif period_option == "Periodo personalizzato":
+            c_start, c_end = st.columns(2)
+            with c_start:
+                period_start = st.date_input("Dal", value=today.replace(day=1), format="DD/MM/YYYY", key="period_start")
+            with c_end:
+                period_end = st.date_input("Al", value=today, format="DD/MM/YYYY", key="period_end")
+            period_start = parse_date(period_start)
+            period_end = parse_date(period_end)
+            if period_start > period_end:
+                st.error("La data iniziale non può essere successiva alla data finale.")
+                st.stop()
+        else:
+            period_start, period_end = period_range(period_option)
+
+        df_period = filter_period(df_all, period_start, period_end)
+        period_label = f"Periodo: {period_start.strftime('%d/%m/%Y')} - {period_end.strftime('%d/%m/%Y')}"
+        st.caption(period_label)
+
+        total, paid_total, unpaid_total, per_instr = payment_summary(df_period)
         c1, c2, c3 = st.columns(3)
-        c1.metric("Totale complessivo", f"€ {total:.2f}")
-        c2.metric("Totale pagato", f"€ {paid_total:.2f}")
-        c3.metric("Totale non pagato", f"€ {unpaid_total:.2f}")
+        c1.metric("Totale complessivo periodo", f"€ {total:.2f}")
+        c2.metric("Totale pagato periodo", f"€ {paid_total:.2f}")
+        c3.metric("Totale non pagato periodo", f"€ {unpaid_total:.2f}")
+
         c4, c5, c6 = st.columns(3)
-        c4.metric("Confermate mese", int((df_month["Stato"] == "Confermata").sum()))
-        c5.metric("Lista attesa mese", int((df_month["Stato"] == "Lista attesa").sum()))
-        c6.metric("Annullate mese", int((df_month["Stato"] == "Annullata").sum()))
-        st.markdown("#### Totali per istruttrice")
+        c4.metric("Confermate periodo", int((df_period["Stato"] == "Confermata").sum()))
+        c5.metric("Lista attesa periodo", int((df_period["Stato"] == "Lista attesa").sum()))
+        c6.metric("Annullate periodo", int((df_period["Stato"] == "Annullata").sum()))
+
+        st.markdown("#### Totali per istruttrice nel periodo")
         st.dataframe(per_instr, use_container_width=True, hide_index=True)
-        unpaid = df_month[(df_month["Pagato"] == False) & (pd.to_numeric(df_month["Importo"], errors="coerce").fillna(0) > 0) & (df_month["Stato"] != "Annullata")]
-        if not unpaid.empty:
-            st.warning("Clienti con importo non pagato: " + ", ".join(unpaid["Nome"].fillna("").astype(str).unique()))
-        status_filter = st.multiselect("Filtra stato", ["Confermata", "Lista attesa", "Annullata"], default=["Confermata", "Lista attesa"])
-        df = df_all.copy()
+
+        if not df_period.empty:
+            unpaid = df_period[(df_period["Pagato"] == False) & (pd.to_numeric(df_period["Importo"], errors="coerce").fillna(0) > 0) & (df_period["Stato"] != "Annullata")]
+            if not unpaid.empty:
+                st.warning("Clienti con importo non pagato nel periodo: " + ", ".join(unpaid["Nome"].fillna("").astype(str).unique()))
+
+        status_filter = st.multiselect("Filtra stato archivio", ["Confermata", "Lista attesa", "Annullata"], default=["Confermata", "Lista attesa"])
+        archive_period_only = st.checkbox("Mostra in tabella solo il periodo selezionato", value=True)
+        df = df_period.copy() if archive_period_only else df_all.copy()
         if status_filter:
             df = df[df["Stato"].isin(status_filter)]
-        st.caption("L'archivio mostra tutte le prenotazioni, comprese quelle passate. Puoi modificare Importo/Pagato e cancellare righe selezionate.")
+
+        st.caption("L'archivio completo resta salvato. Qui puoi filtrare la visualizzazione, modificare Importo/Pagato e cancellare righe selezionate.")
         editor_cols = ["Eliminazione", "Data", "Giorno", "Ora", "Nome", "Telefono", "Istruttrice", "Stato", "Importo", "Pagato", "Note", "Inserita il", "ID"]
         edited = st.data_editor(
             df[editor_cols],
@@ -541,7 +597,7 @@ with tab4:
                         st.error(f"Errore salvataggio: {e}")
         visible_df = edited.drop(columns=["Eliminazione", "ID"], errors="ignore")
         excel_bytes = make_excel(visible_df)
-        pdf_bytes = make_pdf(visible_df)
+        pdf_bytes = make_pdf(visible_df, period_label=period_label)
         d1, d2 = st.columns(2)
         with d1:
             st.download_button("Scarica Excel", data=excel_bytes, file_name="prenotazioni_pilates.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
