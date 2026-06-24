@@ -58,12 +58,7 @@ def github_file_url() -> str:
 
 def load_data() -> Tuple[Dict[str, Any], str | None]:
     if github_enabled():
-        r = requests.get(
-            github_file_url(),
-            headers=github_headers(),
-            params={"ref": get_secret("GITHUB_BRANCH", "main")},
-            timeout=20,
-        )
+        r = requests.get(github_file_url(), headers=github_headers(), params={"ref": get_secret("GITHUB_BRANCH", "main")}, timeout=20)
         if r.status_code == 404:
             data = {"bookings": []}
             save_data(data, sha=None, message="Initialize bookings storage")
@@ -98,11 +93,24 @@ def save_data(data: Dict[str, Any], sha: str | None = None, message: str = "Upda
 def parse_date(d: date | str) -> date:
     if isinstance(d, date):
         return d
-    return datetime.strptime(str(d), "%Y-%m-%d").date()
+    s = str(d).strip()
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            pass
+    return pd.to_datetime(s, dayfirst=True, errors="raise").date()
 
 
 def date_key(d: date) -> str:
     return d.isoformat()
+
+
+def date_it(d: date | str) -> str:
+    try:
+        return parse_date(d).strftime("%d-%m-%Y")
+    except Exception:
+        return str(d or "")
 
 
 def next_working_days(start: date, n: int = 5) -> List[date]:
@@ -140,10 +148,7 @@ def get_bookings_for_slot(data: Dict[str, Any], d: date, time: str, include_canc
 
 
 def confirmed_count(data: Dict[str, Any], d: date, time: str, exclude_id: str | None = None) -> int:
-    return sum(
-        1 for b in get_bookings_for_slot(data, d, time)
-        if b.get("status") == "Confermata" and b.get("id") != exclude_id
-    )
+    return sum(1 for b in get_bookings_for_slot(data, d, time) if b.get("status") == "Confermata" and b.get("id") != exclude_id)
 
 
 def slot_status(data: Dict[str, Any], d: date, time: str) -> Tuple[int, int, List[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -210,7 +215,7 @@ def build_archive_rows(data: Dict[str, Any]) -> pd.DataFrame:
         rows.append({
             "Eliminazione": False,
             "ID": b.get("id"),
-            "Data": b.get("date"),
+            "Data": date_it(b.get("date")),
             "Giorno": b.get("day"),
             "Ora": b.get("time"),
             "Nome": b.get("name"),
@@ -219,27 +224,30 @@ def build_archive_rows(data: Dict[str, Any]) -> pd.DataFrame:
             "Stato": b.get("status"),
             "Importo": money(b.get("amount", 0)),
             "Pagato": bool(b.get("paid", False)),
-            "Note": b.get("note"),
+            "Note": b.get("note", ""),
             "Inserita il": b.get("created_at"),
         })
     cols = ["Eliminazione", "ID", "Data", "Giorno", "Ora", "Nome", "Telefono", "Istruttrice", "Stato", "Importo", "Pagato", "Note", "Inserita il"]
     if not rows:
         return pd.DataFrame(columns=cols)
-    return pd.DataFrame(rows).sort_values(["Data", "Ora", "Nome"])
+    df = pd.DataFrame(rows)
+    df["_DataSort"] = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce")
+    df = df.sort_values(["_DataSort", "Ora", "Nome"]).drop(columns=["_DataSort"])
+    return df
 
 
 def filter_period(df: pd.DataFrame, start: date, end: date) -> pd.DataFrame:
     if df.empty:
         return df.copy()
     work = df.copy()
-    dates = pd.to_datetime(work["Data"], errors="coerce").dt.date
+    dates = pd.to_datetime(work["Data"], dayfirst=True, errors="coerce").dt.date
     return work[(dates >= start) & (dates <= end)].copy()
 
 
 def period_range(option: str) -> Tuple[date, date]:
     today = date.today()
-    if option == "Mese selezionato":
-        return today.replace(day=1), today
+    if option == "Anno in corso":
+        return date(today.year, 1, 1), today
     if option == "Ultimi 3 mesi":
         return today - timedelta(days=90), today
     if option == "Ultimi 6 mesi":
@@ -287,35 +295,14 @@ def make_pdf(df: pd.DataFrame, title: str = "Archivio prenotazioni Pilates - Bod
     total, paid_total, unpaid_total, per_instr = payment_summary(df)
     elements = []
     if Path(LOGO_PATH).exists():
-        img = Image(LOGO_PATH, width=2.1 * cm, height=3.2 * cm)
-        elements.append(img)
-    elements += [
-        Paragraph(title, styles["Title"]),
-        Paragraph(period_label, styles["Normal"]),
-        Paragraph(f"Generato il {datetime.now().strftime('%d/%m/%Y %H:%M')}", styles["Normal"]),
-        Spacer(1, 0.25 * cm),
-    ]
-    totals_table = Table(
-        [["Totale complessivo", "Totale pagato", "Totale non pagato"], [f"€ {total:.2f}", f"€ {paid_total:.2f}", f"€ {unpaid_total:.2f}"]],
-        colWidths=[5 * cm, 5 * cm, 5 * cm],
-    )
-    totals_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(GREEN)),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
-    ]))
+        elements.append(Image(LOGO_PATH, width=2.1 * cm, height=3.2 * cm))
+    elements += [Paragraph(title, styles["Title"]), Paragraph(period_label, styles["Normal"]), Paragraph(f"Generato il {datetime.now().strftime('%d/%m/%Y %H:%M')}", styles["Normal"]), Spacer(1, 0.25 * cm)]
+    totals_table = Table([["Totale complessivo", "Totale pagato", "Totale non pagato"], [f"€ {total:.2f}", f"€ {paid_total:.2f}", f"€ {unpaid_total:.2f}"]], colWidths=[5 * cm, 5 * cm, 5 * cm])
+    totals_table.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(GREEN)), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("ALIGN", (0, 0), (-1, -1), "CENTER"), ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey)]))
     elements += [totals_table, Spacer(1, 0.25 * cm), Paragraph("Totali per istruttrice", styles["Heading2"])]
     instr_data = [["Istruttrice", "Totale complessivo", "Totale pagato", "Totale non pagato"]] + [[r["Istruttrice"], f"€ {r['Totale complessivo']:.2f}", f"€ {r['Totale pagato']:.2f}", f"€ {r['Totale non pagato']:.2f}"] for _, r in per_instr.iterrows()]
     instr_table = Table(instr_data, colWidths=[4 * cm, 4 * cm, 4 * cm, 4 * cm])
-    instr_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(DARK)),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
-        ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
-    ]))
+    instr_table.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(DARK)), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey), ("ALIGN", (1, 1), (-1, -1), "RIGHT")]))
     elements += [instr_table, Spacer(1, 0.35 * cm)]
     visible_cols = ["Data", "Giorno", "Ora", "Nome", "Telefono", "Istruttrice", "Stato", "Importo", "Pagato", "Note"]
     pdf_df = df[visible_cols].copy() if not df.empty else pd.DataFrame(columns=visible_cols)
@@ -323,22 +310,14 @@ def make_pdf(df: pd.DataFrame, title: str = "Archivio prenotazioni Pilates - Bod
     pdf_df["Importo"] = pdf_df["Importo"].map(lambda x: f"€ {money(x):.2f}")
     pdf_df = pdf_df.fillna("").astype(str)
     table = Table([visible_cols] + pdf_df.values.tolist(), repeatRows=1, colWidths=[1.8*cm, 1.8*cm, 1.2*cm, 3.4*cm, 2.4*cm, 2.0*cm, 1.8*cm, 1.5*cm, 1.3*cm, 5.8*cm])
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(GREEN)),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 7),
-        ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f5f7fa")]),
-    ]))
+    table.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(GREEN)), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 7), ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f5f7fa")])]))
     elements.append(table)
     doc.build(elements)
     buffer.seek(0)
     return buffer.getvalue()
 
 
-def update_payment_from_editor(data: Dict[str, Any], edited_df: pd.DataFrame) -> int:
+def update_archive_from_editor(data: Dict[str, Any], edited_df: pd.DataFrame) -> int:
     updates = 0
     by_id = {b.get("id"): b for b in data.get("bookings", [])}
     for _, row in edited_df.iterrows():
@@ -346,9 +325,18 @@ def update_payment_from_editor(data: Dict[str, Any], edited_df: pd.DataFrame) ->
         if bid in by_id:
             new_amount = money(row.get("Importo", 0))
             new_paid = bool(row.get("Pagato", False))
-            if money(by_id[bid].get("amount", 0)) != new_amount or bool(by_id[bid].get("paid", False)) != new_paid:
+            new_note = str(row.get("Note", "") or "")
+            changed = False
+            if money(by_id[bid].get("amount", 0)) != new_amount:
                 by_id[bid]["amount"] = new_amount
+                changed = True
+            if bool(by_id[bid].get("paid", False)) != new_paid:
                 by_id[bid]["paid"] = new_paid
+                changed = True
+            if str(by_id[bid].get("note", "") or "") != new_note:
+                by_id[bid]["note"] = new_note
+                changed = True
+            if changed:
                 updates += 1
     return updates
 
@@ -456,21 +444,7 @@ with tab2:
             if not name.strip():
                 st.error("Inserisci il nome.")
             else:
-                booking = {
-                    "id": new_id(),
-                    "created_at": datetime.now().isoformat(timespec="seconds"),
-                    "date": date_key(d),
-                    "day": DAY_NAMES[d.weekday()],
-                    "time": t,
-                    "name": name.strip(),
-                    "phone": phone.strip(),
-                    "note": note.strip(),
-                    "status": auto_status(data, d, t),
-                    "amount": money(amount),
-                    "paid": bool(paid),
-                    "instructor": instructor,
-                    "created_by": "staff",
-                }
+                booking = {"id": new_id(), "created_at": datetime.now().isoformat(timespec="seconds"), "date": date_key(d), "day": DAY_NAMES[d.weekday()], "time": t, "name": name.strip(), "phone": phone.strip(), "note": note.strip(), "status": auto_status(data, d, t), "amount": money(amount), "paid": bool(paid), "instructor": instructor, "created_by": "staff"}
                 data["bookings"].append(booking)
                 try:
                     save_data(data, sha, f"Add booking {booking['name']} {booking['date']} {booking['time']}")
@@ -487,7 +461,7 @@ with tab3:
         for b in data.get("bookings", []):
             haystack = f"{b.get('name','')} {b.get('phone','')}".lower()
             if query in haystack:
-                rows.append({"Data": b.get("date"), "Giorno": b.get("day"), "Ora": b.get("time"), "Nome": b.get("name"), "Telefono": b.get("phone"), "Istruttrice": b.get("instructor", ""), "Stato": b.get("status"), "Importo": money(b.get("amount", 0)), "Pagato": bool(b.get("paid", False)), "Note": b.get("note")})
+                rows.append({"Data": date_it(b.get("date")), "Giorno": b.get("day"), "Ora": b.get("time"), "Nome": b.get("name"), "Telefono": b.get("phone"), "Istruttrice": b.get("instructor", ""), "Stato": b.get("status"), "Importo": money(b.get("amount", 0)), "Pagato": bool(b.get("paid", False)), "Note": b.get("note")})
     if query and rows:
         st.dataframe(pd.DataFrame(rows).sort_values(["Data", "Ora"]), use_container_width=True, hide_index=True)
     elif query:
@@ -500,10 +474,7 @@ with tab4:
         st.info("Nessuna prenotazione presente.")
     else:
         st.markdown("### Periodo statistiche")
-        period_option = st.selectbox(
-            "Scegli periodo",
-            ["Mese selezionato", "Periodo personalizzato", "Ultimi 3 mesi", "Ultimi 6 mesi", "Ultimo anno"],
-        )
+        period_option = st.selectbox("Scegli periodo", ["Anno in corso", "Mese selezionato", "Periodo personalizzato", "Ultimi 3 mesi", "Ultimi 6 mesi", "Ultimo anno"], index=0)
         today = date.today()
         if period_option == "Mese selezionato":
             selected_month = st.date_input("Mese di riferimento", value=today, format="DD/MM/YYYY", key="stats_month")
@@ -514,68 +485,54 @@ with tab4:
         elif period_option == "Periodo personalizzato":
             c_start, c_end = st.columns(2)
             with c_start:
-                period_start = st.date_input("Dal", value=today.replace(day=1), format="DD/MM/YYYY", key="period_start")
+                period_start = parse_date(st.date_input("Dal", value=date(today.year, 1, 1), format="DD/MM/YYYY", key="period_start"))
             with c_end:
-                period_end = st.date_input("Al", value=today, format="DD/MM/YYYY", key="period_end")
-            period_start = parse_date(period_start)
-            period_end = parse_date(period_end)
+                period_end = parse_date(st.date_input("Al", value=today, format="DD/MM/YYYY", key="period_end"))
             if period_start > period_end:
                 st.error("La data iniziale non può essere successiva alla data finale.")
                 st.stop()
         else:
             period_start, period_end = period_range(period_option)
-
         df_period = filter_period(df_all, period_start, period_end)
-        period_label = f"Periodo: {period_start.strftime('%d/%m/%Y')} - {period_end.strftime('%d/%m/%Y')}"
+        period_label = f"Periodo: {period_start.strftime('%d-%m-%Y')} - {period_end.strftime('%d-%m-%Y')}"
         st.caption(period_label)
-
         total, paid_total, unpaid_total, per_instr = payment_summary(df_period)
         c1, c2, c3 = st.columns(3)
         c1.metric("Totale complessivo periodo", f"€ {total:.2f}")
         c2.metric("Totale pagato periodo", f"€ {paid_total:.2f}")
         c3.metric("Totale non pagato periodo", f"€ {unpaid_total:.2f}")
-
         c4, c5, c6 = st.columns(3)
         c4.metric("Confermate periodo", int((df_period["Stato"] == "Confermata").sum()))
         c5.metric("Lista attesa periodo", int((df_period["Stato"] == "Lista attesa").sum()))
         c6.metric("Annullate periodo", int((df_period["Stato"] == "Annullata").sum()))
-
         st.markdown("#### Totali per istruttrice nel periodo")
         st.dataframe(per_instr, use_container_width=True, hide_index=True)
-
         if not df_period.empty:
             unpaid = df_period[(df_period["Pagato"] == False) & (pd.to_numeric(df_period["Importo"], errors="coerce").fillna(0) > 0) & (df_period["Stato"] != "Annullata")]
             if not unpaid.empty:
                 st.warning("Clienti con importo non pagato nel periodo: " + ", ".join(unpaid["Nome"].fillna("").astype(str).unique()))
-
         status_filter = st.multiselect("Filtra stato archivio", ["Confermata", "Lista attesa", "Annullata"], default=["Confermata", "Lista attesa"])
         archive_period_only = st.checkbox("Mostra in tabella solo il periodo selezionato", value=True)
         df = df_period.copy() if archive_period_only else df_all.copy()
         if status_filter:
             df = df[df["Stato"].isin(status_filter)]
-
-        st.caption("L'archivio completo resta salvato. Qui puoi filtrare la visualizzazione, modificare Importo/Pagato e cancellare righe selezionate.")
+        st.caption("L'archivio completo resta salvato. Qui puoi filtrare la visualizzazione, modificare Importo/Pagato/Note e cancellare righe selezionate.")
         editor_cols = ["Eliminazione", "Data", "Giorno", "Ora", "Nome", "Telefono", "Istruttrice", "Stato", "Importo", "Pagato", "Note", "Inserita il", "ID"]
         edited = st.data_editor(
             df[editor_cols],
             use_container_width=True,
             hide_index=True,
-            column_config={
-                "Eliminazione": st.column_config.CheckboxColumn("Eliminazione"),
-                "Pagato": st.column_config.CheckboxColumn("Pagato"),
-                "Importo": st.column_config.NumberColumn("Importo (€)", min_value=0.0, step=1.0, format="%.2f"),
-                "ID": None,
-            },
-            disabled=["Data", "Giorno", "Ora", "Nome", "Telefono", "Istruttrice", "Stato", "Note", "Inserita il"],
+            column_config={"Eliminazione": st.column_config.CheckboxColumn("Eliminazione"), "Pagato": st.column_config.CheckboxColumn("Pagato"), "Importo": st.column_config.NumberColumn("Importo (€)", min_value=0.0, step=1.0, format="%.2f"), "Note": st.column_config.TextColumn("Note"), "ID": None},
+            disabled=["Data", "Giorno", "Ora", "Nome", "Telefono", "Istruttrice", "Stato", "Inserita il"],
             key="archive_editor",
         )
         col_a, col_b = st.columns(2)
         with col_a:
-            if st.button("Salva modifiche importi/pagamenti"):
-                n = update_payment_from_editor(data, edited)
+            if st.button("Salva modifiche importi/pagamenti/note"):
+                n = update_archive_from_editor(data, edited)
                 if n:
                     try:
-                        save_data(data, sha, "Update payment data")
+                        save_data(data, sha, "Update archive data")
                         st.success(f"Aggiornate {n} prenotazioni.")
                         st.rerun()
                     except Exception as e:
