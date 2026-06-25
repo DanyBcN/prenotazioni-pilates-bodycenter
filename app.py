@@ -1,5 +1,4 @@
 import base64
-import html
 import json
 import os
 import re
@@ -10,18 +9,11 @@ from pathlib import Path
 import pandas as pd
 import requests
 import streamlit as st
-import streamlit.components.v1 as components
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-
-try:
-    from st_aggrid import AgGrid, DataReturnMode, GridOptionsBuilder, GridUpdateMode, JsCode
-    AGGRID_AVAILABLE = True
-except Exception:
-    AGGRID_AVAILABLE = False
 
 APP_TITLE = "Prenotazioni Pilates Reformer"
 CAPACITY = 4
@@ -31,7 +23,7 @@ INSTRUCTORS = ["Grazia", "Alice"]
 GREEN = "#496744"
 DARK = "#243142"
 LIGHT_GREEN = "#eef6f2"
-SECTIONS = ["Settimana", "Prenota", "Archivio clienti", "Cerca", "Archivio"]
+SECTIONS = ["Settimana", "Prenota", "Clienti", "Cerca", "Archivio"]
 
 SCHEDULE = {
     0: ["08:30", "09:30", "10:30", "17:00", "18:00", "19:00"],
@@ -44,6 +36,10 @@ DAY_NAMES = {0: "Lunedì", 1: "Martedì", 2: "Mercoledì", 3: "Giovedì", 4: "Ve
 DAY_ABBR = {0: "Lun", 1: "Mar", 2: "Mer", 3: "Gio", 4: "Ven", 5: "Sab", 6: "Dom"}
 MONTH_NAMES = {1: "gennaio", 2: "febbraio", 3: "marzo", 4: "aprile", 5: "maggio", 6: "giugno", 7: "luglio", 8: "agosto", 9: "settembre", 10: "ottobre", 11: "novembre", 12: "dicembre"}
 
+
+# -----------------------------
+# Base helpers
+# -----------------------------
 
 def get_secret(name, default=""):
     try:
@@ -83,13 +79,19 @@ def save_data(data, sha=None, message="Update data"):
             st.stop()
         r.raise_for_status()
         return
+
     Path(LOCAL_DATA_PATH).parent.mkdir(parents=True, exist_ok=True)
     Path(LOCAL_DATA_PATH).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def load_data():
     if github_enabled():
-        r = requests.get(github_file_url(), headers=github_headers(), params={"ref": get_secret("GITHUB_BRANCH", "main")}, timeout=20)
+        r = requests.get(
+            github_file_url(),
+            headers=github_headers(),
+            params={"ref": get_secret("GITHUB_BRANCH", "main")},
+            timeout=20,
+        )
         if r.status_code == 404:
             data = {"bookings": [], "clients": []}
             save_data(data, None, "Initialize storage")
@@ -97,6 +99,7 @@ def load_data():
         r.raise_for_status()
         payload = r.json()
         return json.loads(base64.b64decode(payload["content"]).decode()), payload.get("sha")
+
     p = Path(LOCAL_DATA_PATH)
     if not p.exists():
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -147,7 +150,7 @@ def money(value):
 def to_bool(value):
     if isinstance(value, bool):
         return value
-    return str(value).strip().lower() in {"true", "1", "sì", "si", "yes"}
+    return str(value).strip().lower() in {"true", "1", "sì", "si", "yes", "y"}
 
 
 def new_id(prefix=""):
@@ -163,6 +166,8 @@ def client_key(first, last):
 
 
 def full_name(c):
+    if not c:
+        return ""
     return f"{str(c.get('last_name', '')).strip()} {str(c.get('first_name', '')).strip()}".strip()
 
 
@@ -186,6 +191,19 @@ def age_from_birth(value):
         return ""
 
 
+def is_mobile_client():
+    try:
+        headers = getattr(st, "context", None).headers
+        ua = str(headers.get("user-agent", headers.get("User-Agent", ""))).lower()
+    except Exception:
+        ua = ""
+    return any(t in ua for t in ["iphone", "android", "mobile", "ipad", "ipod"])
+
+
+# -----------------------------
+# Data model
+# -----------------------------
+
 def get_client(data, cid):
     return next((c for c in data.get("clients", []) if c.get("id") == cid), None)
 
@@ -193,6 +211,7 @@ def get_client(data, cid):
 def ensure_data(data):
     data.setdefault("bookings", [])
     data.setdefault("clients", [])
+
     for c in data["clients"]:
         c.setdefault("id", new_id("c_"))
         c.setdefault("first_name", "")
@@ -203,6 +222,8 @@ def ensure_data(data):
         c.setdefault("birth_date", "")
         c.setdefault("anamnesis", "")
         c.setdefault("goals", "")
+        c.setdefault("created_at", "")
+
     keys = {client_key(c.get("first_name", ""), c.get("last_name", "")): c for c in data["clients"]}
     for b in data["bookings"]:
         b.setdefault("id", new_id("b_"))
@@ -211,6 +232,9 @@ def ensure_data(data):
         b.setdefault("note", "")
         b.setdefault("instructor", "")
         b.setdefault("email", "")
+        b.setdefault("status", "Confermata")
+        b.setdefault("date", date.today().isoformat())
+        b.setdefault("time", "")
         if b.get("client_id"):
             continue
         first, last = split_name(b.get("name", ""))
@@ -218,7 +242,18 @@ def ensure_data(data):
         if k.strip("|") and k in keys:
             b["client_id"] = keys[k]["id"]
         elif k.strip("|"):
-            c = {"id": new_id("c_"), "first_name": first, "last_name": last, "phone": b.get("phone", ""), "email": b.get("email", ""), "notes": "", "birth_date": "", "anamnesis": "", "goals": "", "created_at": datetime.now().isoformat(timespec="seconds")}
+            c = {
+                "id": new_id("c_"),
+                "first_name": first,
+                "last_name": last,
+                "phone": b.get("phone", ""),
+                "email": b.get("email", ""),
+                "notes": "",
+                "birth_date": "",
+                "anamnesis": "",
+                "goals": "",
+                "created_at": datetime.now().isoformat(timespec="seconds"),
+            }
             data["clients"].append(c)
             keys[k] = c
             b["client_id"] = c["id"]
@@ -226,7 +261,10 @@ def ensure_data(data):
 
 
 def client_options(data):
-    return sorted([f"{full_name(c)} | {c.get('phone','')} | {c.get('email','')} | {c.get('id')}" for c in data.get("clients", [])], key=str.lower)
+    return sorted(
+        [f"{full_name(c)} | {c.get('phone','')} | {c.get('email','')} | {c.get('id')}" for c in data.get("clients", [])],
+        key=str.lower,
+    )
 
 
 def option_to_client_id(option):
@@ -242,7 +280,18 @@ def add_client(data, first, last, phone="", email="", notes="", birth_date="", a
         if client_key(c.get("first_name", ""), c.get("last_name", "")) == k:
             return False, "Cliente già presente: nome e cognome devono essere univoci.", c.get("id")
     cid = new_id("c_")
-    data["clients"].append({"id": cid, "first_name": first, "last_name": last, "phone": phone, "email": email.strip(), "notes": notes.strip(), "birth_date": birth_date.strip(), "anamnesis": anamnesis.strip(), "goals": goals.strip(), "created_at": datetime.now().isoformat(timespec="seconds")})
+    data["clients"].append({
+        "id": cid,
+        "first_name": first,
+        "last_name": last,
+        "phone": phone,
+        "email": email.strip(),
+        "notes": notes.strip(),
+        "birth_date": birth_date.strip(),
+        "anamnesis": anamnesis.strip(),
+        "goals": goals.strip(),
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+    })
     return True, "Cliente salvato.", cid
 
 
@@ -257,7 +306,17 @@ def update_client_record(data, cid, first, last, phone, email, birth, notes, ana
     for other in data.get("clients", []):
         if other.get("id") != cid and client_key(other.get("first_name", ""), other.get("last_name", "")) == k:
             return False, "Esiste già un altro cliente con lo stesso nome e cognome."
-    c.update({"first_name": first, "last_name": last, "phone": phone.strip(), "email": email.strip(), "birth_date": birth.strip(), "notes": notes.strip(), "anamnesis": anamnesis.strip(), "goals": goals.strip()})
+
+    c.update({
+        "first_name": first,
+        "last_name": last,
+        "phone": phone.strip(),
+        "email": email.strip(),
+        "birth_date": birth.strip(),
+        "notes": notes.strip(),
+        "anamnesis": anamnesis.strip(),
+        "goals": goals.strip(),
+    })
     for b in data.get("bookings", []):
         if b.get("client_id") == cid:
             b["name"] = full_name(c)
@@ -281,7 +340,15 @@ def clients_df(data, sort_by="Alfabetico"):
     rows = []
     for c in data.get("clients", []):
         lv = last_visit(data, c.get("id"))
-        rows.append({"ID": c.get("id"), "Cognome": c.get("last_name", ""), "Nome": c.get("first_name", ""), "Telefono": c.get("phone", ""), "Email": c.get("email", ""), "Ultima lezione": date_it(lv) if lv else "", "_last": lv or date(1900, 1, 1)})
+        rows.append({
+            "ID": c.get("id"),
+            "Cognome": c.get("last_name", ""),
+            "Nome": c.get("first_name", ""),
+            "Telefono": c.get("phone", ""),
+            "Email": c.get("email", ""),
+            "Ultima lezione": date_it(lv) if lv else "",
+            "_last": lv or date(1900, 1, 1),
+        })
     if not rows:
         return pd.DataFrame(columns=["ID", "Cognome", "Nome", "Telefono", "Email", "Ultima lezione", "_last"])
     df = pd.DataFrame(rows)
@@ -289,6 +356,10 @@ def clients_df(data, sort_by="Alfabetico"):
         return df.sort_values(["_last", "Cognome", "Nome"], ascending=[False, True, True]).reset_index(drop=True)
     return df.sort_values(["Cognome", "Nome"]).reset_index(drop=True)
 
+
+# -----------------------------
+# Bookings
+# -----------------------------
 
 def times_for(d):
     return SCHEDULE.get(d.weekday(), [])
@@ -304,7 +375,10 @@ def next_days(start, n=5):
 
 
 def slot_rows(data, d, t, include_cancelled=False):
-    return sorted([b for b in data.get("bookings", []) if b.get("date") == date_key(d) and b.get("time") == t and (include_cancelled or b.get("status") != "Annullata")], key=lambda x: x.get("created_at", ""))
+    return sorted(
+        [b for b in data.get("bookings", []) if b.get("date") == date_key(d) and b.get("time") == t and (include_cancelled or b.get("status") != "Annullata")],
+        key=lambda x: x.get("created_at", ""),
+    )
 
 
 def confirmed_count(data, d, t, exclude_id=None):
@@ -330,7 +404,23 @@ def create_booking(data, cid, d, t, amount, paid, instructor, note):
     c = get_client(data, cid)
     if not c:
         raise ValueError("Cliente non trovato.")
-    b = {"id": new_id("b_"), "created_at": datetime.now().isoformat(timespec="seconds"), "client_id": cid, "date": date_key(d), "day": DAY_NAMES[d.weekday()], "time": t, "name": full_name(c), "phone": c.get("phone", ""), "email": c.get("email", ""), "note": note.strip(), "status": auto_status(data, d, t), "amount": money(amount), "paid": bool(paid), "instructor": instructor, "created_by": "staff"}
+    b = {
+        "id": new_id("b_"),
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "client_id": cid,
+        "date": date_key(d),
+        "day": DAY_NAMES[d.weekday()],
+        "time": t,
+        "name": full_name(c),
+        "phone": c.get("phone", ""),
+        "email": c.get("email", ""),
+        "note": note.strip(),
+        "status": auto_status(data, d, t),
+        "amount": money(amount),
+        "paid": bool(paid),
+        "instructor": instructor,
+        "created_by": "staff",
+    }
     data["bookings"].append(b)
     return b
 
@@ -354,11 +444,30 @@ def delete_bookings(data, ids):
     return old - len(data["bookings"])
 
 
+# -----------------------------
+# Archive / export
+# -----------------------------
+
 def archive_df(data):
     rows = []
     for b in data.get("bookings", []):
         c = get_client(data, b.get("client_id"))
-        rows.append({"Elimina": False, "Data": date_label_it(b.get("date")), "Data ISO": b.get("date", ""), "Ora": b.get("time"), "Cliente": full_name(c) if c else b.get("name", ""), "Telefono": (c or {}).get("phone", b.get("phone", "")), "Email": (c or {}).get("email", b.get("email", "")), "Istruttrice": b.get("instructor", ""), "Stato": b.get("status"), "Importo": money(b.get("amount", 0)), "Pagato": bool(b.get("paid", False)), "Note cliente": (c or {}).get("notes", ""), "ID": b.get("id"), "Client ID": b.get("client_id")})
+        rows.append({
+            "Elimina": False,
+            "Data": date_label_it(b.get("date")),
+            "Data ISO": b.get("date", ""),
+            "Ora": b.get("time", ""),
+            "Cliente": full_name(c) if c else b.get("name", ""),
+            "Telefono": (c or {}).get("phone", b.get("phone", "")),
+            "Email": (c or {}).get("email", b.get("email", "")),
+            "Istruttrice": b.get("instructor", ""),
+            "Stato": b.get("status", ""),
+            "Importo": money(b.get("amount", 0)),
+            "Pagato": bool(b.get("paid", False)),
+            "Note cliente": (c or {}).get("notes", ""),
+            "ID": b.get("id"),
+            "Client ID": b.get("client_id"),
+        })
     cols = ["Elimina", "Data", "Data ISO", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Importo", "Pagato", "Note cliente", "ID", "Client ID"]
     if not rows:
         return pd.DataFrame(columns=cols)
@@ -411,8 +520,8 @@ def update_archive(data, edited_df):
         b = by_id.get(r.get("ID"))
         if not b:
             continue
-        vals = {"amount": money(r.get("Importo", 0)), "paid": to_bool(r.get("Pagato", False))}
         changed = False
+        vals = {"amount": money(r.get("Importo", 0)), "paid": to_bool(r.get("Pagato", False))}
         for k, v in vals.items():
             if b.get(k) != v:
                 b[k] = v
@@ -471,8 +580,8 @@ def make_pdf(df, label=""):
     pdf = df[cols].copy() if not df.empty else pd.DataFrame(columns=cols)
     pdf["Pagato"] = pdf["Pagato"].map(lambda x: "Sì" if to_bool(x) else "No")
     pdf["Importo"] = pdf["Importo"].map(lambda x: f"€ {money(x):.2f}")
-    data = [cols] + pdf.fillna("").astype(str).values.tolist()
-    tab = Table(data, repeatRows=1)
+    table_data = [cols] + pdf.fillna("").astype(str).values.tolist()
+    tab = Table(table_data, repeatRows=1)
     tab.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(GREEN)), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("GRID", (0, 0), (-1, -1), .25, colors.lightgrey), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold")]))
     elems.append(tab)
     doc.build(elems)
@@ -480,62 +589,26 @@ def make_pdf(df, label=""):
     return bio.getvalue()
 
 
-def is_mobile_client():
-    try:
-        headers = getattr(st, "context", None).headers
-        ua = str(headers.get("user-agent", headers.get("User-Agent", ""))).lower()
-    except Exception:
-        ua = ""
-    if any(t in ua for t in ["iphone", "android", "mobile", "ipad", "ipod"]):
-        return True
-    try:
-        return str(st.query_params.get("_bc_mobile", "")).lower() in {"1", "true", "yes", "mobile"}
-    except Exception:
-        return False
-
-
-def sync_mobile_mode():
-    try:
-        components.html("""
-        <script>
-        try {
-          const mobile = (window.parent.innerWidth || window.innerWidth || 1200) <= 760;
-          const url = new URL(window.parent.location.href);
-          const wanted = mobile ? "1" : "0";
-          if (url.searchParams.get("_bc_mobile") !== wanted) {
-            url.searchParams.set("_bc_mobile", wanted);
-            window.parent.history.replaceState(null, "", url.toString());
-          }
-        } catch(e) {}
-        </script>
-        """, height=0)
-    except Exception:
-        pass
-
+# -----------------------------
+# UI
+# -----------------------------
 
 def app_css():
     st.markdown(f"""
     <style>
-    [data-testid="stSidebar"], [data-testid="collapsedControl"] {{ display: none !important; }}
-    .stApp {{ background: #fbfcfb; }}
+    [data-testid="stSidebar"], [data-testid="collapsedControl"] {{ display:none !important; }}
+    .stApp {{ background:#fbfcfb; }}
     .block-container {{ padding-top:1rem !important; max-width:1240px !important; }}
     div[data-testid="stMetric"] {{ background:#fff; border:1px solid #e6e9e6; border-radius:14px; padding:12px; }}
-    .ag-root-wrapper {{ border-radius:14px !important; border:1px solid #dfe6de !important; overflow:hidden !important; box-shadow:0 4px 14px rgba(36,49,66,0.05) !important; }}
-    .ag-header {{ background-color:#edf5ef !important; border-bottom:1px solid #d7e3d7 !important; }}
-    .ag-header-cell-label {{ justify-content:center !important; text-align:center !important; font-weight:700 !important; font-size:13px !important; color:{DARK} !important; }}
-    .ag-cell {{ display:flex !important; align-items:center !important; font-size:13px !important; border-right:1px solid #eef1ee !important; }}
-    .ag-row {{ cursor:pointer !important; }}
-    .ag-row-hover {{ background-color:{LIGHT_GREEN} !important; cursor:pointer !important; }}
-    .ag-row-selected {{ background-color:#dceee4 !important; }}
     div[data-testid="stRadio"] > div {{ gap:.65rem !important; flex-wrap:wrap !important; }}
     div[data-testid="stRadio"] label {{ min-height:42px !important; padding:.55rem 1rem !important; border-radius:999px !important; border:1px solid #dce6dc !important; background:#fff !important; box-shadow:0 3px 10px rgba(36,49,66,.045) !important; }}
     div[data-testid="stRadio"] input[type="radio"] {{ display:none !important; }}
-    div[data-testid="stRadio"] label:has(input:checked) {{ background:#496744 !important; border-color:#496744 !important; }}
+    div[data-testid="stRadio"] label:has(input:checked) {{ background:{GREEN} !important; border-color:{GREEN} !important; }}
     div[data-testid="stRadio"] label:has(input:checked) p {{ color:#fff !important; }}
     @media (max-width:760px) {{
         .block-container {{ padding-left:.65rem !important; padding-right:.65rem !important; padding-top:.45rem !important; max-width:100% !important; }}
-        h1 {{ font-size:1.85rem !important; line-height:1.08 !important; }}
-        img {{ max-width:92px !important; height:auto !important; }}
+        h1 {{ font-size:1.75rem !important; line-height:1.08 !important; }}
+        img {{ max-width:88px !important; height:auto !important; }}
         div[data-testid="stRadio"] > div {{ display:grid !important; grid-template-columns:1fr 1fr !important; gap:.45rem !important; }}
         div[data-testid="stRadio"] label {{ width:100% !important; min-height:42px !important; padding:.45rem .55rem !important; border-radius:14px !important; overflow:visible !important; }}
         div[data-testid="stRadio"] label p {{ font-size:.86rem !important; font-weight:800 !important; white-space:normal !important; overflow:visible !important; text-overflow:clip !important; line-height:1.1 !important; }}
@@ -561,142 +634,6 @@ def login():
     return False
 
 
-def cell_style(align="center", editable=False, bold=False, color=None):
-    justify = {"left": "flex-start", "right": "flex-end", "center": "center"}.get(align, "center")
-    out = {"display": "flex", "alignItems": "center", "justifyContent": justify, "textAlign": align, "fontSize": "13px", "paddingLeft": "10px", "paddingRight": "10px", "lineHeight": "1.25"}
-    if editable:
-        out["backgroundColor"] = "#fffdf0"
-    if bold:
-        out["fontWeight"] = "700"
-    if color:
-        out["color"] = color
-    return out
-
-
-def grid_css():
-    return {".ag-root-wrapper": {"border-radius": "14px", "border": "1px solid #dfe6de", "overflow": "hidden"}, ".ag-header": {"background-color": "#edf5ef"}, ".ag-header-cell-label": {"justify-content": "center", "text-align": "center"}, ".ag-row-hover": {"background-color": f"{LIGHT_GREEN} !important"}}
-
-
-def selected_row_from_response(response):
-    selected = response.get("selected_rows", [])
-    if selected is None:
-        return None
-    if isinstance(selected, pd.DataFrame):
-        if selected.empty:
-            return None
-        return selected.iloc[0].to_dict()
-    if isinstance(selected, list) and selected:
-        return selected[0]
-    return None
-
-
-def client_grid(df, key):
-    show = df[["ID", "Cognome", "Nome", "Telefono", "Email", "Ultima lezione"]].copy()
-    if not AGGRID_AVAILABLE:
-        event = st.dataframe(show.drop(columns=["ID"]), use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key=key)
-        rows = getattr(getattr(event, "selection", None), "rows", []) or []
-        return show.iloc[rows[0]].to_dict() if rows else None
-    gb = GridOptionsBuilder.from_dataframe(show)
-    gb.configure_default_column(sortable=True, filter=True, resizable=True, cellStyle=cell_style("center"))
-    gb.configure_column("ID", hide=True)
-    gb.configure_column("Cognome", width=230, cellStyle=cell_style("left", bold=True, color=DARK))
-    gb.configure_column("Nome", width=210, cellStyle=cell_style("left"))
-    gb.configure_column("Telefono", width=150, cellStyle=cell_style("left"))
-    gb.configure_column("Email", width=250, cellStyle=cell_style("left"))
-    gb.configure_column("Ultima lezione", width=150, cellStyle=cell_style("center"))
-    gb.configure_selection(selection_mode="single", use_checkbox=False)
-    gb.configure_grid_options(rowHeight=40, headerHeight=44, suppressRowClickSelection=False, rowSelection="single")
-    response = AgGrid(show, gridOptions=gb.build(), height=460, fit_columns_on_grid_load=False, update_mode=GridUpdateMode.SELECTION_CHANGED, data_return_mode=DataReturnMode.FILTERED_AND_SORTED, allow_unsafe_jscode=True, custom_css=grid_css(), key=key)
-    return selected_row_from_response(response)
-
-
-def archive_grid(df, key):
-    columns = ["Elimina", "Data", "Data ISO", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Importo", "Pagato", "Note cliente", "ID", "Client ID"]
-    show = df[columns].copy()
-    if not AGGRID_AVAILABLE:
-        edited = st.data_editor(show.drop(columns=["ID", "Client ID", "Data ISO"], errors="ignore"), use_container_width=True, hide_index=True, key=key)
-        edited["ID"] = show["ID"].values
-        edited["Client ID"] = show["Client ID"].values
-        edited["Data ISO"] = show["Data ISO"].values
-        return edited, None
-    gb = GridOptionsBuilder.from_dataframe(show)
-    gb.configure_default_column(sortable=True, filter=True, resizable=True, cellStyle=cell_style("center"))
-    gb.configure_column("ID", hide=True)
-    gb.configure_column("Client ID", hide=True)
-    gb.configure_column("Data ISO", hide=True)
-    gb.configure_column("Elimina", editable=True, width=82, pinned="left", cellStyle=cell_style("center", editable=True))
-    gb.configure_column("Data", editable=False, width=160, comparator=JsCode("""
-        function(valueA, valueB, nodeA, nodeB) {
-            const a = nodeA && nodeA.data ? nodeA.data["Data ISO"] : "";
-            const b = nodeB && nodeB.data ? nodeB.data["Data ISO"] : "";
-            if (a === b) return 0;
-            if (!a) return 1;
-            if (!b) return -1;
-            return a > b ? 1 : -1;
-        }
-    """), cellStyle=cell_style("center"))
-    gb.configure_column("Ora", editable=False, width=78, cellStyle=cell_style("center"))
-    gb.configure_column("Cliente", editable=False, width=230, pinned="left", sort="asc", sortIndex=0, cellStyle=cell_style("left", bold=True, color="#1f5c8f"))
-    gb.configure_column("Telefono", editable=False, width=140, cellStyle=cell_style("left"))
-    gb.configure_column("Email", editable=True, width=260, cellStyle=cell_style("left", editable=True))
-    gb.configure_column("Istruttrice", editable=False, width=120, cellStyle=cell_style("center"))
-    gb.configure_column("Stato", editable=False, width=125, cellStyle=cell_style("center"))
-    gb.configure_column("Importo", editable=True, type=["numericColumn"], width=110, cellStyle=cell_style("right", editable=True))
-    gb.configure_column("Pagato", editable=True, width=95, cellStyle=cell_style("center", editable=True))
-    gb.configure_column("Note cliente", editable=True, width=360, wrapText=True, autoHeight=True, cellStyle=cell_style("left", editable=True))
-    gb.configure_selection(selection_mode="single", use_checkbox=False)
-    gb.configure_grid_options(rowHeight=40, headerHeight=44, suppressRowClickSelection=False, rowSelection="single")
-    response = AgGrid(show, gridOptions=gb.build(), height=680, fit_columns_on_grid_load=False, update_mode=GridUpdateMode.SELECTION_CHANGED | GridUpdateMode.VALUE_CHANGED, data_return_mode=DataReturnMode.AS_INPUT, allow_unsafe_jscode=True, custom_css=grid_css(), key=key)
-    return pd.DataFrame(response.get("data", show)), selected_row_from_response(response)
-
-
-def render_client_card(data, sha, cid, prefix="client"):
-    c = get_client(data, cid)
-    if not c:
-        st.error("Cliente non trovato.")
-        return
-    st.markdown(f"### Scheda anagrafica: {full_name(c)}")
-    a, b = st.columns(2)
-    last = a.text_input("Cognome", value=c.get("last_name", ""), key=f"{prefix}_last_{cid}")
-    first = b.text_input("Nome", value=c.get("first_name", ""), key=f"{prefix}_first_{cid}")
-    a, b, c3 = st.columns(3)
-    phone = a.text_input("Telefono", value=c.get("phone", ""), key=f"{prefix}_phone_{cid}")
-    email = b.text_input("Email", value=c.get("email", ""), key=f"{prefix}_email_{cid}")
-    birth = c3.text_input("Data di nascita", value=date_it(c.get("birth_date", "")), placeholder="gg-mm-aaaa", key=f"{prefix}_birth_{cid}")
-    st.caption(f"Età: {age_from_birth(birth) if birth else ''}")
-    notes = st.text_area("Note cliente", value=c.get("notes", ""), key=f"{prefix}_notes_{cid}")
-    anam = st.text_area("Anamnesi / problematiche", value=c.get("anamnesis", ""), height=140, key=f"{prefix}_anam_{cid}")
-    goals = st.text_area("Obiettivi", value=c.get("goals", ""), height=100, key=f"{prefix}_goals_{cid}")
-    if st.button("Salva scheda cliente", type="primary", key=f"{prefix}_save_{cid}", use_container_width=is_mobile_client()):
-        ok, msg = update_client_record(data, cid, first, last, phone, email, birth, notes, anam, goals)
-        if ok:
-            save_data(data, sha, "Update client record")
-            st.session_state["archive_nonce"] = int(st.session_state.get("archive_nonce", 0)) + 1
-            st.session_state["client_nonce"] = int(st.session_state.get("client_nonce", 0)) + 1
-            st.session_state.pop("open_client_id", None)
-            if prefix.startswith("archivio"):
-                st.session_state["section"] = "Archivio"
-                try:
-                    st.query_params["_bc_mobile"] = "1"
-                except Exception:
-                    pass
-            st.success(msg)
-            st.rerun()
-        else:
-            st.error(msg)
-    hist = []
-    for bkg in data.get("bookings", []):
-        if bkg.get("client_id") == cid:
-            hist.append({"Data": date_it(bkg.get("date")), "Ora": bkg.get("time"), "Istruttrice": bkg.get("instructor"), "Stato": bkg.get("status"), "Importo": money(bkg.get("amount", 0)), "Pagato": bool(bkg.get("paid", False)), "Note prenotazione": bkg.get("note", "")})
-    if hist and not is_mobile_client():
-        st.markdown("#### Storico lezioni")
-        st.dataframe(pd.DataFrame(hist).sort_values(["Data", "Ora"]), use_container_width=True, hide_index=True)
-
-
-def request_section(section):
-    st.session_state["_next_section"] = section
-
-
 def render_header():
     logo_html = ""
     if Path(LOGO_PATH).exists():
@@ -711,6 +648,51 @@ def render_header():
         </div>
     </div>
     """, unsafe_allow_html=True)
+
+
+def save_and_rerun(data, sha, message):
+    save_data(data, sha, message)
+    st.rerun()
+
+
+def render_client_form(data, sha, cid, prefix, close_key=None):
+    c = get_client(data, cid)
+    if not c:
+        st.error("Cliente non trovato.")
+        return
+
+    st.markdown(f"### Scheda cliente: {full_name(c)}")
+    a, b = st.columns(2)
+    last = a.text_input("Cognome", value=c.get("last_name", ""), key=f"{prefix}_last_{cid}")
+    first = b.text_input("Nome", value=c.get("first_name", ""), key=f"{prefix}_first_{cid}")
+    a, b, c3 = st.columns(3)
+    phone = a.text_input("Telefono", value=c.get("phone", ""), key=f"{prefix}_phone_{cid}")
+    email = b.text_input("Email", value=c.get("email", ""), key=f"{prefix}_email_{cid}")
+    birth = c3.text_input("Data di nascita", value=date_it(c.get("birth_date", "")), placeholder="gg-mm-aaaa", key=f"{prefix}_birth_{cid}")
+    st.caption(f"Età: {age_from_birth(birth) if birth else ''}")
+    notes = st.text_area("Note cliente", value=c.get("notes", ""), key=f"{prefix}_notes_{cid}")
+    anam = st.text_area("Anamnesi / problematiche", value=c.get("anamnesis", ""), height=140, key=f"{prefix}_anam_{cid}")
+    goals = st.text_area("Obiettivi", value=c.get("goals", ""), height=100, key=f"{prefix}_goals_{cid}")
+
+    if st.button("Salva scheda cliente", type="primary", key=f"{prefix}_save_{cid}", use_container_width=is_mobile_client()):
+        ok, msg = update_client_record(data, cid, first, last, phone, email, birth, notes, anam, goals)
+        if ok:
+            if close_key:
+                st.session_state.pop(close_key, None)
+            save_data(data, sha, "Update client record")
+            st.success(msg)
+            st.rerun()
+        else:
+            st.error(msg)
+
+    if not is_mobile_client():
+        hist = []
+        for bkg in data.get("bookings", []):
+            if bkg.get("client_id") == cid:
+                hist.append({"Data": date_it(bkg.get("date")), "Ora": bkg.get("time"), "Istruttrice": bkg.get("instructor"), "Stato": bkg.get("status"), "Importo": money(bkg.get("amount", 0)), "Pagato": bool(bkg.get("paid", False)), "Note prenotazione": bkg.get("note", "")})
+        if hist:
+            st.markdown("#### Storico lezioni")
+            st.dataframe(pd.DataFrame(hist).sort_values(["Data", "Ora"]), use_container_width=True, hide_index=True)
 
 
 def render_week(data, sha):
@@ -736,14 +718,11 @@ def render_week(data, sha):
                         st.markdown(f"**{status_icon(bkg.get('status'))} {bkg.get('name','')}** — {bkg.get('phone','')}")
                         a, b2, c = st.columns(3)
                         if a.button("Conferma", key=f"c{bkg['id']}") and change_status(data, bkg["id"], "Confermata"):
-                            save_data(data, sha, "Conferma")
-                            st.rerun()
+                            save_and_rerun(data, sha, "Conferma")
                         if b2.button("Attesa", key=f"w{bkg['id']}") and change_status(data, bkg["id"], "Lista attesa"):
-                            save_data(data, sha, "Attesa")
-                            st.rerun()
+                            save_and_rerun(data, sha, "Attesa")
                         if c.button("Annulla", key=f"x{bkg['id']}") and change_status(data, bkg["id"], "Annullata"):
-                            save_data(data, sha, "Annulla")
-                            st.rerun()
+                            save_and_rerun(data, sha, "Annulla")
 
 
 def render_booking(data, sha):
@@ -770,53 +749,49 @@ def render_booking(data, sha):
         if st.button("Salva nuovo cliente"):
             ok, msg, cid = add_client(data, first, last, phone, email, notes, birth)
             if ok:
-                save_data(data, sha, "Add client")
-                st.success(msg)
-                st.rerun()
+                save_and_rerun(data, sha, "Add client")
             else:
                 st.error(msg)
+
     if cid:
         st.markdown("### Dati prenotazione")
         a, b = st.columns(2)
-        d = parse_date(a.date_input("Data", value=date.today(), min_value=date.today(), format="DD/MM/YYYY", key="bd"))
+        d = parse_date(a.date_input("Data", value=date.today(), min_value=date.today(), format="DD/MM/YYYY", key="booking_date"))
         ts = times_for(d)
-        if ts:
-            t = b.selectbox("Orario", ts)
-            a, b, c = st.columns(3)
-            amount = a.number_input("Importo (€)", min_value=0.0, value=0.0, step=1.0, format="%.2f")
-            paid = b.checkbox("Pagato")
-            instr = c.selectbox("Istruttrice", INSTRUCTORS)
-            note = st.text_area("Note prenotazione")
-            st.info(f"Stato automatico: {auto_status(data, d, t)}")
-            if st.button("Salva prenotazione", type="primary"):
-                bk = create_booking(data, cid, d, t, amount, paid, instr, note)
-                save_data(data, sha, f"Add booking {bk['name']}")
-                request_section("Archivio")
-                st.session_state["archive_nonce"] = int(st.session_state.get("archive_nonce", 0)) + 1
-                st.success(f"Prenotazione salvata: {bk['status']}.")
-                st.rerun()
+        if not ts:
+            st.warning("Nessun orario previsto per questa data.")
+            return
+        t = b.selectbox("Orario", ts)
+        a, b, c = st.columns(3)
+        amount = a.number_input("Importo (€)", min_value=0.0, value=0.0, step=1.0, format="%.2f")
+        paid = b.checkbox("Pagato")
+        instr = c.selectbox("Istruttrice", INSTRUCTORS)
+        note = st.text_area("Note prenotazione")
+        st.info(f"Stato automatico: {auto_status(data, d, t)}")
+        if st.button("Salva prenotazione", type="primary"):
+            bk = create_booking(data, cid, d, t, amount, paid, instr, note)
+            st.session_state["_next_section"] = "Archivio"
+            save_and_rerun(data, sha, f"Add booking {bk['name']}")
 
 
 def render_clients(data, sha):
-    st.subheader("Archivio clienti")
+    st.subheader("Clienti")
     with st.expander("➕ Inserisci nuovo cliente"):
         a, b = st.columns(2)
-        last = a.text_input("Cognome", key="cl")
-        first = b.text_input("Nome", key="cf")
+        last = a.text_input("Cognome", key="new_client_last")
+        first = b.text_input("Nome", key="new_client_first")
         c, d = st.columns(2)
-        phone = c.text_input("Telefono", key="cp")
-        email = d.text_input("Email", key="ce")
-        birth = st.text_input("Data di nascita", placeholder="gg-mm-aaaa", key="cb")
-        notes = st.text_area("Note cliente", key="cn")
+        phone = c.text_input("Telefono", key="new_client_phone")
+        email = d.text_input("Email", key="new_client_email")
+        birth = st.text_input("Data di nascita", placeholder="gg-mm-aaaa", key="new_client_birth")
+        notes = st.text_area("Note cliente", key="new_client_notes")
         if st.button("Salva cliente"):
             ok, msg, _ = add_client(data, first, last, phone, email, notes, birth)
             if ok:
-                save_data(data, sha, "Add client")
-                st.session_state["client_nonce"] = int(st.session_state.get("client_nonce", 0)) + 1
-                st.success(msg)
-                st.rerun()
+                save_and_rerun(data, sha, "Add client")
             else:
                 st.error(msg)
+
     sort_by = st.radio("Ordina per", ["Alfabetico", "Ultima visita"], horizontal=True, key="client_sort")
     dfc = clients_df(data, sort_by)
     if dfc.empty:
@@ -824,7 +799,15 @@ def render_clients(data, sha):
         return
     q = st.text_input("Cerca cliente").lower().strip()
     view = dfc[dfc.apply(lambda r: q in " ".join(map(str, r.values)).lower(), axis=1)] if q else dfc
+
     if is_mobile_client():
+        open_cid = st.session_state.get("client_open_id")
+        if open_cid:
+            if st.button("← Torna ai clienti", use_container_width=True, key="client_mobile_back"):
+                st.session_state.pop("client_open_id", None)
+                st.rerun()
+            render_client_form(data, sha, open_cid, prefix="clienti_mobile", close_key="client_open_id")
+            return
         for _, r in view.iterrows():
             cid = r.get("ID")
             c = get_client(data, cid) or {}
@@ -835,45 +818,54 @@ def render_clients(data, sha):
                     st.markdown(f"📞 [{c.get('phone')}](tel:{c.get('phone')})")
                 if c.get("email"):
                     st.caption(f"✉️ {c.get('email')}")
-                if st.button("Apri scheda cliente", key=f"open_client_{cid}", use_container_width=True):
-                    st.session_state["open_client_id"] = cid
+                if st.button("Apri scheda cliente", key=f"client_mobile_open_{cid}", use_container_width=True):
+                    st.session_state["client_open_id"] = cid
                     st.rerun()
-        cid_open = st.session_state.get("open_client_id")
-        if cid_open:
-            st.divider()
-            render_client_card(data, sha, cid_open, prefix="clienti_mobile")
         return
-    st.caption("Tabella clienti: clicca una riga per aprire la scheda qui sotto.")
-    selected = client_grid(view, f"client_grid_{st.session_state.get('client_nonce', 0)}")
-    if selected and selected.get("ID"):
+
+    display = view.drop(columns=["ID", "_last"], errors="ignore")
+    st.dataframe(display, use_container_width=True, hide_index=True)
+    opts = ["—"] + [f"{r.Cognome} {r.Nome} | {r.ID}" for _, r in view.iterrows()]
+    choice = st.selectbox("Apri scheda cliente", opts)
+    if choice != "—":
+        cid = choice.split("|")[-1].strip()
         st.divider()
-        render_client_card(data, sha, selected.get("ID"), prefix="clienti")
+        render_client_form(data, sha, cid, prefix="clienti_pc")
 
 
 def render_search(data):
     st.subheader("Cerca")
     q = st.text_input("Cerca per nome, telefono o email").lower().strip()
+    if not q:
+        return
     dfa = archive_df(data)
-    if q and not dfa.empty:
-        res = dfa[dfa.apply(lambda r: q in " ".join(map(str, r.values)).lower(), axis=1)]
-        if is_mobile_client():
-            for _, r in res.iterrows():
-                with st.container(border=True):
-                    st.markdown(f"**{r.get('Cliente','')}**")
-                    st.caption(f"📅 {r.get('Data','')} · 🕒 {r.get('Ora','')} · {r.get('Stato','')}")
-                    st.caption(f"📞 {r.get('Telefono','')} · € {money(r.get('Importo',0)):.2f}")
-        else:
-            st.dataframe(res.drop(columns=["Elimina", "ID", "Client ID", "Data ISO"], errors="ignore"), use_container_width=True, hide_index=True)
+    res = dfa[dfa.apply(lambda r: q in " ".join(map(str, r.values)).lower(), axis=1)] if not dfa.empty else dfa
+    if res.empty:
+        st.info("Nessun risultato.")
+        return
+    if is_mobile_client():
+        for _, r in res.iterrows():
+            with st.container(border=True):
+                st.markdown(f"**{r.get('Cliente','')}**")
+                st.caption(f"📅 {r.get('Data','')} · 🕒 {r.get('Ora','')} · {r.get('Stato','')}")
+                st.caption(f"📞 {r.get('Telefono','')} · € {money(r.get('Importo',0)):.2f}")
+    else:
+        st.dataframe(res.drop(columns=["Elimina", "ID", "Client ID", "Data ISO"], errors="ignore"), use_container_width=True, hide_index=True)
 
 
 def render_archive_mobile(df, data, sha):
-    cid_open = st.session_state.get("open_client_id")
-    if cid_open:
-        render_client_card(data, sha, cid_open, prefix="archivio_mobile")
-        st.divider()
+    open_cid = st.session_state.get("archive_open_client_id")
+    if open_cid:
+        if st.button("← Torna alle schede", key="archive_mobile_back", use_container_width=True):
+            st.session_state.pop("archive_open_client_id", None)
+            st.rerun()
+        render_client_form(data, sha, open_cid, prefix="archivio_mobile", close_key="archive_open_client_id")
+        return
+
     if df.empty:
         st.info("Nessuna prenotazione nel filtro selezionato.")
         return
+
     st.markdown("#### Schede archivio")
     for i, (_, r) in enumerate(df.reset_index(drop=True).iterrows()):
         cid = str(r.get("Client ID", "") or "")
@@ -892,23 +884,18 @@ def render_archive_mobile(df, data, sha):
             if note:
                 st.caption(f"📝 {note}")
             if cid:
-                if st.button("Apri scheda cliente", key=f"arch_mobile_open_{bid}_{i}", use_container_width=True):
-                    st.session_state["open_client_id"] = cid
-                    st.session_state["section"] = "Archivio"
-                    try:
-                        st.query_params["_bc_mobile"] = "1"
-                    except Exception:
-                        pass
+                if st.button("Apri scheda cliente", key=f"archive_mobile_open_{bid}_{i}", use_container_width=True):
+                    st.session_state["archive_open_client_id"] = cid
                     st.rerun()
 
 
 def render_archive(data, sha):
     st.subheader("Archivio, pagamenti e statistiche")
-    sync_mobile_mode()
     dfa = archive_df(data)
     if dfa.empty:
         st.info("Nessuna prenotazione presente.")
         return
+
     opt = st.selectbox("Scegli periodo", ["Anno in corso", "Mese selezionato", "Periodo personalizzato", "Ultimi 3 mesi", "Ultimi 6 mesi", "Ultimo anno"], index=0)
     today = date.today()
     if opt == "Mese selezionato":
@@ -921,6 +908,7 @@ def render_archive(data, sha):
         end = parse_date(b.date_input("Al", value=date(today.year, 12, 31), format="DD/MM/YYYY"))
     else:
         start, end = period_range(opt)
+
     dfp = filter_period(dfa, start, end)
     label = f"Periodo: {start.strftime('%d-%m-%Y')} - {end.strftime('%d-%m-%Y')}"
     st.caption(label)
@@ -929,8 +917,9 @@ def render_archive(data, sha):
     a.metric("Totale complessivo", f"€ {total:.2f}")
     b.metric("Totale pagato", f"€ {paid:.2f}")
     c.metric("Totale non pagato", f"€ {unpaid:.2f}")
+
     status = st.multiselect("Filtra stato archivio", ["Confermata", "Lista attesa", "Annullata"], default=["Confermata", "Lista attesa"])
-    only = st.checkbox("Mostra in tabella solo il periodo selezionato", value=True)
+    only = st.checkbox("Mostra solo il periodo selezionato", value=True)
     df = dfp.copy() if only else dfa.copy()
     if status:
         df = df[df["Stato"].isin(status)]
@@ -941,42 +930,58 @@ def render_archive(data, sha):
 
     st.dataframe(per, use_container_width=True, hide_index=True)
     st.markdown("#### Modifica importi, pagamenti e note")
-    st.caption("Colonne editabili evidenziate: Email, Importo, Pagato e Note cliente. Clicca una riga per aprire la scheda cliente sotto.")
-    grid_key = f"archive_grid_{st.session_state.get('archive_nonce', 0)}"
-    edited, selected = archive_grid(df, grid_key)
-    if selected and selected.get("Client ID"):
-        st.divider()
-        render_client_card(data, sha, selected.get("Client ID"), prefix="archivio")
+    edit_cols = ["Elimina", "Data", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Importo", "Pagato", "Note cliente", "ID", "Client ID", "Data ISO"]
+    edited = st.data_editor(
+        df[edit_cols],
+        use_container_width=True,
+        hide_index=True,
+        disabled=["Data", "Ora", "Cliente", "Telefono", "Istruttrice", "Stato", "ID", "Client ID", "Data ISO"],
+        column_config={
+            "ID": None,
+            "Client ID": None,
+            "Data ISO": None,
+            "Importo": st.column_config.NumberColumn("Importo", format="€ %.2f"),
+        },
+        key=f"archive_editor_{st.session_state.get('archive_nonce', 0)}",
+    )
+
     a, b = st.columns(2)
     if a.button("Salva modifiche importi/pagamenti/note"):
         n = update_archive(data, edited)
         if n:
-            save_data(data, sha, "Update archive")
             st.session_state["archive_nonce"] = int(st.session_state.get("archive_nonce", 0)) + 1
-            st.success(f"Aggiornate {n} righe/prenotazioni.")
-            st.rerun()
+            save_and_rerun(data, sha, "Update archive")
         else:
             st.info("Nessuna modifica da salvare.")
+
     ids = edited.loc[edited.get("Elimina", False).apply(to_bool) == True, "ID"].dropna().astype(str).tolist() if not edited.empty else []
     if b.button("Elimina selezionate", type="primary"):
         if not ids:
             st.error("Non hai selezionato nessuna prenotazione da eliminare.")
         else:
             n = delete_bookings(data, ids)
-            save_data(data, sha, "Delete bookings")
-            request_section("Archivio")
             st.session_state["archive_nonce"] = int(st.session_state.get("archive_nonce", 0)) + 1
-            st.success(f"Eliminate {n} prenotazioni.")
-            st.rerun()
+            save_and_rerun(data, sha, "Delete bookings")
+
+    opts = ["—"] + [f"{r.Cliente} | {r['Client ID']}" for _, r in df.dropna(subset=["Client ID"]).drop_duplicates("Client ID").iterrows()]
+    choice = st.selectbox("Apri scheda cliente", opts)
+    if choice != "—":
+        cid = choice.split("|")[-1].strip()
+        st.divider()
+        render_client_form(data, sha, cid, prefix="archivio_pc")
+
     a, b = st.columns(2)
     a.download_button("Scarica Excel", data=make_excel(edited), file_name="prenotazioni_pilates.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     b.download_button("Scarica PDF archivio", data=make_pdf(edited, label), file_name="archivio_prenotazioni_pilates.pdf", mime="application/pdf")
 
 
+# -----------------------------
+# App bootstrap
+# -----------------------------
+
 st.set_page_config(page_title=APP_TITLE, page_icon="🧘", layout="wide", initial_sidebar_state="collapsed")
 app_css()
 render_header()
-sync_mobile_mode()
 
 if not login():
     st.stop()
@@ -990,8 +995,6 @@ except Exception as e:
 
 if not github_enabled():
     st.warning("Modalità locale: per condivisione usa i Secrets GitHub su Streamlit.")
-if not AGGRID_AVAILABLE:
-    st.warning("AgGrid non è ancora installato: fai Reboot app da Streamlit Cloud.")
 
 if "_next_section" in st.session_state:
     st.session_state["section"] = st.session_state.pop("_next_section")
@@ -1000,7 +1003,8 @@ if "section" not in st.session_state or st.session_state["section"] not in SECTI
 
 section = st.radio("Sezione", SECTIONS, horizontal=True, key="section", label_visibility="collapsed")
 if st.session_state.get("_last_section") != section:
-    st.session_state.pop("open_client_id", None)
+    st.session_state.pop("client_open_id", None)
+    st.session_state.pop("archive_open_client_id", None)
     st.session_state["_last_section"] = section
 st.divider()
 
@@ -1008,7 +1012,7 @@ if section == "Settimana":
     render_week(data, sha)
 elif section == "Prenota":
     render_booking(data, sha)
-elif section == "Archivio clienti":
+elif section == "Clienti":
     render_clients(data, sha)
 elif section == "Cerca":
     render_search(data)
