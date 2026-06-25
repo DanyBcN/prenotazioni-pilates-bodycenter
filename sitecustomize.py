@@ -138,7 +138,6 @@ def _patch_app_source():
 '''
     )
 
-    # Remove prior mobile/toggle blocks that made cards visible on desktop.
     for block in [
         '''    st.markdown("#### Archivio telefono")
     archive_mobile_cards(df, data, sha)
@@ -179,16 +178,16 @@ def archive_mobile_html(df):
         tel_link = f"<a href='tel:{telefono_raw}' style='color:#1f5c8f;text-decoration:none;font-weight:700;'>{telefono}</a>" if telefono_raw else ""
         email_html = f"<div style='font-size:.9rem;color:#68727d;margin-top:4px;'>✉️ {email}</div>" if email else ""
         note_html = f"<div style='margin-top:10px;background:#f5f7f4;border-radius:12px;padding:9px 10px;color:#39434d;font-size:.92rem;'>📝 {note}</div>" if note else ""
-        cards.append(f"""
-        <div style='background:white;border:1px solid #dde7dc;border-radius:18px;padding:14px 14px;margin:10px 0;box-shadow:0 4px 14px rgba(36,49,66,.06);'>
-            <div style='font-size:1.08rem;font-weight:850;color:#243142;margin-bottom:3px;'>{cliente}</div>
-            <div style='font-size:.92rem;color:#496744;font-weight:750;margin-bottom:8px;'>📅 {data} · 🕒 {ora} · {stato}</div>
-            <div style='font-size:.95rem;color:#39434d;'>📞 {tel_link}</div>
-            {email_html}
-            <div style='margin-top:8px;font-size:.95rem;color:#243142;'>💶 <b>{importo}</b> · {pagamento}</div>
-            {note_html}
-        </div>
-        """)
+        cards.append(
+            "<div style='background:white;border:1px solid #dde7dc;border-radius:18px;padding:14px 14px;margin:10px 0;box-shadow:0 4px 14px rgba(36,49,66,.06);'>"
+            f"<div style='font-size:1.08rem;font-weight:850;color:#243142;margin-bottom:3px;'>{cliente}</div>"
+            f"<div style='font-size:.92rem;color:#496744;font-weight:750;margin-bottom:8px;'>📅 {data} · 🕒 {ora} · {stato}</div>"
+            f"<div style='font-size:.95rem;color:#39434d;'>📞 {tel_link}</div>"
+            f"{email_html}"
+            f"<div style='margin-top:8px;font-size:.95rem;color:#243142;'>💶 <b>{importo}</b> · {pagamento}</div>"
+            f"{note_html}"
+            "</div>"
+        )
     st.markdown("<div class='mobile-archive'>" + "".join(cards) + "</div>", unsafe_allow_html=True)
 '''
     marker = '\n\ndef render_archive(data, sha):\n'
