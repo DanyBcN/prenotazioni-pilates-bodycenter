@@ -13,6 +13,10 @@ def _patch_app_source():
     new_add_client = """def add_client(data, first, last, phone=\"\", email=\"\", notes=\"\", birth_date=\"\", anamnesis=\"\", goals=\"\"):\n    first, last, phone = first.strip(), last.strip(), phone.strip()\n    if not first or not last or not phone:\n        return False, \"Inserisci cognome, nome e telefono.\", None\n"""
     text = text.replace(old_add_client, new_add_client)
 
+    old_import = "from st_aggrid import AgGrid, DataReturnMode, GridOptionsBuilder, GridUpdateMode"
+    new_import = "from st_aggrid import AgGrid, DataReturnMode, GridOptionsBuilder, GridUpdateMode, JsCode"
+    text = text.replace(old_import, new_import)
+
     old_clients_card = """    if selected:\n        st.session_state[\"open_client_id\"] = selected.get(\"ID\")\n    cid_open = st.session_state.get(\"open_client_id\")\n    if cid_open:\n        st.divider()\n        render_client_card(data, sha, cid_open, prefix=\"clienti\")\n"""
     new_clients_card = """    if selected and selected.get(\"ID\"):\n        st.divider()\n        render_client_card(data, sha, selected.get(\"ID\"), prefix=\"clienti\")\n"""
     text = text.replace(old_clients_card, new_clients_card)
@@ -39,6 +43,27 @@ def _patch_app_source():
 
     # Sort archive rows alphabetically by client surname/name, then date and time.
     text = text.replace('return df.sort_values(["_sort", "Ora", "Cliente"]).drop(columns=["_sort"]).reset_index(drop=True)', 'return df.sort_values(["Cliente", "_sort", "Ora"]).drop(columns=["_sort"]).reset_index(drop=True)')
+
+    # When clicking the visible Data column, sort by the hidden ISO date, not by the pretty text.
+    old_data_col = '    gb.configure_column("Data", editable=False, width=160, cellStyle=cell_style("center"))\n'
+    new_data_col = '''    gb.configure_column(
+        "Data",
+        editable=False,
+        width=160,
+        comparator=JsCode("""
+        function(valueA, valueB, nodeA, nodeB, isDescending) {
+            const a = nodeA && nodeA.data ? nodeA.data["Data ISO"] : "";
+            const b = nodeB && nodeB.data ? nodeB.data["Data ISO"] : "";
+            if (a === b) return 0;
+            if (!a) return 1;
+            if (!b) return -1;
+            return a > b ? 1 : -1;
+        }
+        """),
+        cellStyle=cell_style("center"),
+    )
+'''
+    text = text.replace(old_data_col, new_data_col)
 
     if text != original:
         path.write_text(text, encoding="utf-8")
