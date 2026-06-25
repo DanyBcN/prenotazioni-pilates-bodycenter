@@ -13,9 +13,10 @@ def _patch_app_source():
     new_add_client = """def add_client(data, first, last, phone=\"\", email=\"\", notes=\"\", birth_date=\"\", anamnesis=\"\", goals=\"\"):\n    first, last, phone = first.strip(), last.strip(), phone.strip()\n    if not first or not last or not phone:\n        return False, \"Inserisci cognome, nome e telefono.\", None\n"""
     text = text.replace(old_add_client, new_add_client)
 
-    old_import = "from st_aggrid import AgGrid, DataReturnMode, GridOptionsBuilder, GridUpdateMode"
-    new_import = "from st_aggrid import AgGrid, DataReturnMode, GridOptionsBuilder, GridUpdateMode, JsCode"
-    text = text.replace(old_import, new_import)
+    text = text.replace(
+        "from st_aggrid import AgGrid, DataReturnMode, GridOptionsBuilder, GridUpdateMode",
+        "from st_aggrid import AgGrid, DataReturnMode, GridOptionsBuilder, GridUpdateMode, JsCode",
+    )
 
     old_clients_card = """    if selected:\n        st.session_state[\"open_client_id\"] = selected.get(\"ID\")\n    cid_open = st.session_state.get(\"open_client_id\")\n    if cid_open:\n        st.divider()\n        render_client_card(data, sha, cid_open, prefix=\"clienti\")\n"""
     new_clients_card = """    if selected and selected.get(\"ID\"):\n        st.divider()\n        render_client_card(data, sha, selected.get(\"ID\"), prefix=\"clienti\")\n"""
@@ -40,7 +41,10 @@ def _patch_app_source():
     text = text.replace('    gb.configure_column("Inserita il", editable=False, width=170, cellStyle=cell_style("center"))\n', '')
     text = text.replace('    gb.configure_column("Inserita il", editable=False, width=168, cellStyle=cell_style("center"))\n', '')
 
-    text = text.replace('return df.sort_values(["_sort", "Ora", "Cliente"]).drop(columns=["_sort"]).reset_index(drop=True)', 'return df.sort_values(["Cliente", "_sort", "Ora"]).drop(columns=["_sort"]).reset_index(drop=True)')
+    text = text.replace(
+        'return df.sort_values(["_sort", "Ora", "Cliente"]).drop(columns=["_sort"]).reset_index(drop=True)',
+        'return df.sort_values(["Cliente", "_sort", "Ora"]).drop(columns=["_sort"]).reset_index(drop=True)',
+    )
 
     old_data_col = '    gb.configure_column("Data", editable=False, width=160, cellStyle=cell_style("center"))\n'
     new_data_col = '''    gb.configure_column(
@@ -101,7 +105,7 @@ def clients_mobile_cards(view, data, sha):
     if 'def archive_mobile_cards(' not in text:
         text = text.replace(marker, mobile_functions + marker)
 
-    clients_toggle_old = '''    if st.toggle("📱 Vista compatta telefono", key="clients_mobile_view"):
+    clients_toggle = '''    if st.toggle("📱 Vista compatta telefono", key="clients_mobile_view"):
         clients_mobile_cards(view, data, sha)
         return
 '''
@@ -113,21 +117,26 @@ def clients_mobile_cards(view, data, sha):
         archive_mobile_cards(df, data, sha)
         return
 '''
-    text = text.replace(clients_toggle_old, '')
+    archive_toggle_new = '''    if st.toggle("📱 Vista compatta telefono", value=True, key="archive_mobile_view_v2"):
+        archive_mobile_cards(df, data, sha)
+        return
+'''
+
+    text = text.replace(clients_toggle, '')
     text = text.replace(archive_toggle_old, '')
     text = text.replace(archive_toggle_old_default, '')
+    text = text.replace(archive_toggle_new, '')
 
     old_clients_view = '''    st.caption("Tabella clienti: clicca una riga per aprire la scheda qui sotto.")
     selected = client_grid(view, "client_grid")
 '''
-    new_clients_view = clients_toggle_old + old_clients_view
-    text = text.replace(old_clients_view, new_clients_view)
+    text = text.replace(old_clients_view, clients_toggle + old_clients_view)
 
     old_archive_view = '''    st.caption("Colonne editabili evidenziate: Email, Importo, Pagato e Note cliente. Clicca una riga per aprire la scheda cliente sotto.")
     grid_key = f"archive_grid_{st.session_state.get('archive_nonce', 0)}"
 '''
     new_archive_view = '''    st.caption("Da telefono resta attiva la vista compatta. Disattivala solo da PC per modificare la tabella completa.")
-''' + archive_toggle_old_default + '''    grid_key = f"archive_grid_{st.session_state.get('archive_nonce', 0)}"
+''' + archive_toggle_new + '''    grid_key = f"archive_grid_{st.session_state.get('archive_nonce', 0)}"
 '''
     text = text.replace(old_archive_view, new_archive_view)
 
