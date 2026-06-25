@@ -21,9 +21,33 @@ def _patch_app_source():
     css_extra = '''
     /* BC_MOBILE_STABLE */
     @media (max-width:760px) {
-        .block-container { padding-left:.7rem !important; padding-right:.7rem !important; max-width:100% !important; }
-        h1 { font-size:2.2rem !important; line-height:1.08 !important; }
+        .block-container { padding-left:.7rem !important; padding-right:.7rem !important; max-width:100% !important; padding-top:.45rem !important; }
+        h1 { font-size:1.9rem !important; line-height:1.08 !important; margin-bottom:.25rem !important; }
+        img { max-width:92px !important; height:auto !important; }
         div[data-testid="stHorizontalBlock"] { gap:.35rem !important; }
+        div[data-testid="stRadio"] > div { display:grid !important; grid-template-columns:1fr 1fr !important; gap:.45rem !important; }
+        div[data-testid="stRadio"] label {
+            width:100% !important;
+            min-height:42px !important;
+            padding:.45rem .55rem !important;
+            border-radius:14px !important;
+            border:1px solid #dce6dc !important;
+            background:#ffffff !important;
+            box-shadow:0 2px 8px rgba(36,49,66,.06) !important;
+            overflow:visible !important;
+        }
+        div[data-testid="stRadio"] input[type="radio"] { display:none !important; }
+        div[data-testid="stRadio"] label p {
+            color:#243142 !important;
+            font-size:.86rem !important;
+            font-weight:800 !important;
+            white-space:normal !important;
+            overflow:visible !important;
+            text-overflow:clip !important;
+            line-height:1.1 !important;
+        }
+        div[data-testid="stRadio"] label:has(input:checked) { background:#496744 !important; border-color:#496744 !important; }
+        div[data-testid="stRadio"] label:has(input:checked) p { color:#ffffff !important; }
         .bc-mobile-card { display:block !important; }
         .bc-pc-only { display:none !important; }
     }
@@ -191,7 +215,6 @@ def bc_archive_mobile_cards(df):
 
     text = re.sub(r'def render_archive\(data, sha\):\n.*?\n\nst\.set_page_config', new_render_archive + "\n\nst.set_page_config", text, flags=re.S)
 
-    # Keep the client card from staying open across sections and force refresh after saving.
     text = text.replace(
         '''        if ok:
             save_data(data, sha, "Update client record")
