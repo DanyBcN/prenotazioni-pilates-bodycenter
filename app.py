@@ -1,12 +1,10 @@
 import base64
-import html
 import json
 import os
 import re
 from datetime import date, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
-from urllib.parse import quote
 
 import pandas as pd
 import requests
@@ -63,8 +61,8 @@ def save_data(data, sha=None, message="Update data"):
             st.error("Conflitto: ricarica la pagina e riprova.")
             st.stop()
         r.raise_for_status()
-        return
-    Path(LOCAL_DATA_PATH).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    else:
+        Path(LOCAL_DATA_PATH).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def load_data():
@@ -238,6 +236,19 @@ def last_visit(data, cid):
     return max(dates) if dates else None
 
 
+def clients_df(data, sort_by="Alfabetico"):
+    rows = []
+    for c in data.get("clients", []):
+        lv = last_visit(data, c.get("id"))
+        rows.append({"ID": c.get("id"), "Cognome": c.get("last_name", ""), "Nome": c.get("first_name", ""), "Ultima lezione": date_it(lv) if lv else "", "_last": lv or date(1900, 1, 1)})
+    if not rows:
+        return pd.DataFrame(columns=["ID", "Cognome", "Nome", "Ultima lezione", "_last"])
+    df = pd.DataFrame(rows)
+    if sort_by == "Ultima visita":
+        return df.sort_values(["_last", "Cognome", "Nome"], ascending=[False, True, True]).reset_index(drop=True)
+    return df.sort_values(["Cognome", "Nome"]).reset_index(drop=True)
+
+
 def times_for(d):
     return SCHEDULE.get(d.weekday(), [])
 
@@ -300,19 +311,6 @@ def delete_bookings(data, ids):
     old = len(data.get("bookings", []))
     data["bookings"] = [b for b in data.get("bookings", []) if b.get("id") not in ids]
     return old - len(data["bookings"])
-
-
-def clients_df(data, sort_by="Alfabetico"):
-    rows = []
-    for c in data.get("clients", []):
-        lv = last_visit(data, c.get("id"))
-        rows.append({"ID": c.get("id"), "Cognome": c.get("last_name", ""), "Nome": c.get("first_name", ""), "Ultima lezione": date_it(lv) if lv else "", "_last": lv or date(1900, 1, 1)})
-    if not rows:
-        return pd.DataFrame(columns=["ID", "Cognome", "Nome", "Ultima lezione", "_last"])
-    df = pd.DataFrame(rows)
-    if sort_by == "Ultima visita":
-        return df.sort_values(["_last", "Cognome", "Nome"], ascending=[False, True, True]).reset_index(drop=True)
-    return df.sort_values(["Cognome", "Nome"]).reset_index(drop=True)
 
 
 def archive_df(data):
@@ -422,9 +420,13 @@ def make_pdf(df, label=""):
 
 
 def login():
+    if st.session_state.get("authenticated", False):
+        st.sidebar.success("Accesso consentito")
+        return True
     st.sidebar.header("Accesso staff")
     pwd = st.sidebar.text_input("Password", type="password")
     if pwd == get_secret("APP_PASSWORD", "pilates123"):
+        st.session_state["authenticated"] = True
         st.sidebar.success("Accesso consentito")
         return True
     if pwd:
@@ -432,50 +434,19 @@ def login():
     return False
 
 
-def clickable_css():
+def style_css():
     st.markdown(f"""
     <style>
-    .click-table {{ width:100%; border-collapse:collapse; font-size:15px; margin-top:8px; }}
-    .click-table th {{ text-align:left; background:#f4f6f8; padding:10px; border:1px solid #e1e4e8; font-weight:700; }}
-    .click-table td {{ padding:10px; border:1px solid #e1e4e8; vertical-align:middle; }}
-    .click-table tr:hover td {{ background:#eef6f2; cursor:pointer; }}
-    .click-table a {{ color:#1f5c8f; text-decoration:none; font-weight:700; display:block; cursor:pointer; }}
-    .click-table a:hover {{ color:{GREEN}; text-decoration:underline; cursor:pointer; }}
+    .table-header {{background:#f4f6f8; border:1px solid #e1e4e8; padding:8px; font-weight:700; min-height:38px;}}
+    .table-cell {{border:1px solid #e1e4e8; border-top:0; padding:8px; min-height:42px; display:flex; align-items:center; overflow-wrap:anywhere;}}
+    div.stButton > button {{cursor:pointer !important;}}
+    div.stButton > button:hover {{background:#eef6f2 !important; border-color:{GREEN} !important; color:#111 !important;}}
     </style>
     """, unsafe_allow_html=True)
 
 
-def client_link(cid, label):
-    return f"<a href='?client_id={quote(str(cid))}'>{html.escape(str(label))}</a>"
-
-
-def render_clients_html_table(df):
-    rows = []
-    for _, r in df.iterrows():
-        rows.append(f"<tr><td>{client_link(r['ID'], r['Cognome'])}</td><td>{html.escape(str(r['Nome']))}</td><td>{html.escape(str(r['Ultima lezione'] or ''))}</td></tr>")
-    st.markdown("<table class='click-table'><thead><tr><th>Cognome</th><th>Nome</th><th>Ultima lezione</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>", unsafe_allow_html=True)
-
-
-def render_archive_html_table(df):
-    rows = []
-    for _, r in df.iterrows():
-        name = client_link(r.get("Client ID"), r.get("Cliente")) if r.get("Client ID") else html.escape(str(r.get("Cliente", "")))
-        rows.append(
-            "<tr>"
-            f"<td>{html.escape(str(r.get('Data','')))}</td>"
-            f"<td>{html.escape(str(r.get('Giorno','')))}</td>"
-            f"<td>{html.escape(str(r.get('Ora','')))}</td>"
-            f"<td>{name}</td>"
-            f"<td>{html.escape(str(r.get('Telefono','')))}</td>"
-            f"<td>{html.escape(str(r.get('Email','')))}</td>"
-            f"<td>{html.escape(str(r.get('Istruttrice','')))}</td>"
-            f"<td>{html.escape(str(r.get('Stato','')))}</td>"
-            f"<td>€ {money(r.get('Importo',0)):.2f}</td>"
-            f"<td>{'Sì' if bool(r.get('Pagato')) else 'No'}</td>"
-            f"<td>{html.escape(str(r.get('Note','')))}</td>"
-            "</tr>"
-        )
-    st.markdown("<table class='click-table'><thead><tr><th>Data</th><th>Giorno</th><th>Ora</th><th>Cliente</th><th>Telefono</th><th>Email</th><th>Istruttrice</th><th>Stato</th><th>Importo</th><th>Pagato</th><th>Note</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>", unsafe_allow_html=True)
+def open_client(cid):
+    st.session_state["open_client_id"] = cid
 
 
 def render_client_card(data, sha, cid, prefix="client"):
@@ -512,8 +483,43 @@ def render_client_card(data, sha, cid, prefix="client"):
         st.dataframe(pd.DataFrame(hist).sort_values(["Data", "Ora"]), use_container_width=True, hide_index=True)
 
 
+def render_client_table(df, key_prefix):
+    h = st.columns([2, 2, 2])
+    for col, title in zip(h, ["Cognome", "Nome", "Ultima lezione"]):
+        col.markdown(f"<div class='table-header'>{title}</div>", unsafe_allow_html=True)
+    for idx, r in df.reset_index(drop=True).iterrows():
+        c1, c2, c3 = st.columns([2, 2, 2])
+        if c1.button(str(r["Cognome"]), key=f"{key_prefix}_client_{r['ID']}_{idx}", use_container_width=True):
+            open_client(r["ID"])
+            st.rerun()
+        c2.markdown(f"<div class='table-cell'>{r['Nome']}</div>", unsafe_allow_html=True)
+        c3.markdown(f"<div class='table-cell'>{r['Ultima lezione'] or ''}</div>", unsafe_allow_html=True)
+
+
+def render_archive_click_table(df):
+    widths = [1.2, 1.2, 1, 2.2, 1.5, 1.9, 1.4, 1.3, 1, 1, 2.0]
+    headers = ["Data", "Giorno", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Importo", "Pagato", "Note"]
+    cols = st.columns(widths)
+    for col, title in zip(cols, headers):
+        col.markdown(f"<div class='table-header'>{title}</div>", unsafe_allow_html=True)
+    for idx, r in df.reset_index(drop=True).iterrows():
+        cols = st.columns(widths)
+        values = [r.get("Data", ""), r.get("Giorno", ""), r.get("Ora", "")]
+        for col, val in zip(cols[:3], values):
+            col.markdown(f"<div class='table-cell'>{val}</div>", unsafe_allow_html=True)
+        cid = r.get("Client ID")
+        if cid and cols[3].button(str(r.get("Cliente", "")), key=f"arch_open_{r.get('ID')}_{idx}", use_container_width=True):
+            open_client(cid)
+            st.rerun()
+        elif not cid:
+            cols[3].markdown(f"<div class='table-cell'>{r.get('Cliente','')}</div>", unsafe_allow_html=True)
+        other = [r.get("Telefono", ""), r.get("Email", ""), r.get("Istruttrice", ""), r.get("Stato", ""), f"€ {money(r.get('Importo', 0)):.2f}", "Sì" if bool(r.get("Pagato")) else "No", r.get("Note", "")]
+        for col, val in zip(cols[4:], other):
+            col.markdown(f"<div class='table-cell'>{str(val)}</div>", unsafe_allow_html=True)
+
+
 st.set_page_config(page_title=APP_TITLE, page_icon="🧘", layout="wide")
-clickable_css()
+style_css()
 
 c1, c2 = st.columns([1, 6])
 with c1:
@@ -536,8 +542,6 @@ except Exception as e:
 
 if not github_enabled():
     st.warning("Modalità locale: per condivisione usa i Secrets GitHub su Streamlit.")
-
-selected_client_id = st.query_params.get("client_id", "")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📅 Settimana", "➕ Prenota", "👤 Clienti", "🔎 Cerca", "📋 Archivio"])
 
@@ -652,11 +656,12 @@ with tab3:
     else:
         q = st.text_input("Cerca cliente").lower().strip()
         view = dfc[dfc.apply(lambda r: q in " ".join(map(str, r.values)).lower(), axis=1)] if q else dfc
-        st.caption("Passa il mouse sul cognome e clicca una volta per aprire la scheda.")
-        render_clients_html_table(view)
-        if selected_client_id:
+        st.caption("Clicca sul cognome per aprire la scheda qui sotto, senza cambiare pagina.")
+        render_client_table(view, "clienti")
+        cid_open = st.session_state.get("open_client_id")
+        if cid_open:
             st.divider()
-            render_client_card(data, sha, selected_client_id, prefix="clienti")
+            render_client_card(data, sha, cid_open, prefix="clienti")
 
 with tab4:
     st.subheader("Cerca")
@@ -698,11 +703,12 @@ with tab5:
         df = dfp.copy() if only else dfa.copy()
         if status:
             df = df[df["Stato"].isin(status)]
-        st.caption("Archivio come tabella: clicca sul nome del cliente per aprire la scheda anagrafica.")
-        render_archive_html_table(df)
-        if selected_client_id:
+        st.caption("Archivio come prima: clicca sul nome cliente per aprire la scheda qui sotto.")
+        render_archive_click_table(df)
+        cid_open = st.session_state.get("open_client_id")
+        if cid_open:
             st.divider()
-            render_client_card(data, sha, selected_client_id, prefix="archivio")
+            render_client_card(data, sha, cid_open, prefix="archivio")
         st.markdown("#### Modifica importi, pagamenti e note")
         cols = ["Eliminazione", "Data", "Giorno", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Importo", "Pagato", "Note", "Inserita il", "ID"]
         ed = st.data_editor(df[cols], use_container_width=True, hide_index=True, column_config={"Eliminazione": st.column_config.CheckboxColumn("Eliminazione"), "Pagato": st.column_config.CheckboxColumn("Pagato"), "Importo": st.column_config.NumberColumn("Importo (€)", min_value=0.0, step=1.0, format="%.2f"), "Note": st.column_config.TextColumn("Note"), "ID": None}, disabled=["Data", "Giorno", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Inserita il"], key="aed")
