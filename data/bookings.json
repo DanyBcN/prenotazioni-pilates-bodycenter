@@ -152,6 +152,23 @@
       "paid": false,
       "instructor": "Alice",
       "created_by": "staff"
+    },
+    {
+      "id": "b_20260625105854973138",
+      "created_at": "2026-06-25T10:58:54",
+      "client_id": "c_20260625105605333874",
+      "date": "2026-07-15",
+      "day": "Mercoledì",
+      "time": "08:30",
+      "name": "Sigismondi Manuela",
+      "phone": "",
+      "email": "",
+      "note": "",
+      "status": "Confermata",
+      "amount": 30.0,
+      "paid": false,
+      "instructor": "Alice",
+      "created_by": "staff"
     }
   ],
   "clients": [
