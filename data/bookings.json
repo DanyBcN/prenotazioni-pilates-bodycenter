@@ -135,6 +135,23 @@
       "paid": false,
       "instructor": "Alice",
       "created_by": "staff"
+    },
+    {
+      "id": "b_20260625105827423945",
+      "created_at": "2026-06-25T10:58:27",
+      "client_id": "c_20260625105521185289",
+      "date": "2026-07-15",
+      "day": "Mercoledì",
+      "time": "08:30",
+      "name": "Galante Anita",
+      "phone": "",
+      "email": "",
+      "note": "",
+      "status": "Confermata",
+      "amount": 30.0,
+      "paid": false,
+      "instructor": "Alice",
+      "created_by": "staff"
     }
   ],
   "clients": [
