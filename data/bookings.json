@@ -339,6 +339,18 @@
       "anamnesis": "",
       "goals": "",
       "created_at": "2026-06-25T11:32:39"
+    },
+    {
+      "id": "c_20260625121936143241",
+      "first_name": "Giorgio",
+      "last_name": "Benedetto",
+      "phone": "+39 3312979229",
+      "email": "benedettogiorgio62@gmail.com",
+      "notes": "",
+      "birth_date": "17/08/1962",
+      "anamnesis": "",
+      "goals": "",
+      "created_at": "2026-06-25T12:19:36"
     }
   ]
 }
