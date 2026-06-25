@@ -122,12 +122,10 @@ def update_client_record(data,cid,first,last,phone,email,birth,notes,anamnesis,g
     for other in data.get("clients",[]):
         if other.get("id")!=cid and ckey(other.get("first_name",""),other.get("last_name",""))==k:
             return False,"Esiste già un altro cliente con lo stesso nome e cognome."
-    old_name=full_name(c)
     c.update({"first_name":first,"last_name":last,"phone":phone.strip(),"email":email.strip(),"birth_date":birth,"notes":notes.strip(),"anamnesis":anamnesis.strip(),"goals":goals.strip()})
-    new_name=full_name(c)
     for b in data.get("bookings",[]):
         if b.get("client_id")==cid:
-            b["name"]=new_name; b["phone"]=c.get("phone",""); b["email"]=c.get("email","")
+            b["name"]=full_name(c); b["phone"]=c.get("phone",""); b["email"]=c.get("email","")
     return True,"Scheda cliente aggiornata."
 
 def times_for(d): return SCHEDULE.get(d.weekday(),[])
@@ -178,8 +176,8 @@ def clients_df(data,sort_by="Alfabetico"):
     cols=["ID","Cognome","Nome","Ultima lezione","_last","Prenotazioni"]
     if not rows: return pd.DataFrame(columns=cols)
     df=pd.DataFrame(rows)
-    if sort_by=="Ultima visita": return df.sort_values(["_last","Cognome","Nome"],ascending=[False,True,True])
-    return df.sort_values(["Cognome","Nome"])
+    if sort_by=="Ultima visita": return df.sort_values(["_last","Cognome","Nome"],ascending=[False,True,True]).reset_index(drop=True)
+    return df.sort_values(["Cognome","Nome"]).reset_index(drop=True)
 
 def period_range(opt):
     today=date.today()
@@ -273,7 +271,7 @@ with tab2:
         else: st.warning("Nessun cliente in archivio.")
     else:
         a,b=st.columns(2); last=a.text_input("Cognome"); first=b.text_input("Nome"); c,d=st.columns(2); phone=c.text_input("Telefono"); email=d.text_input("Email"); birth=st.text_input("Data di nascita",placeholder="gg-mm-aaaa"); notes=st.text_area("Note cliente")
-        if st.button("Salva nuovo cliente"): 
+        if st.button("Salva nuovo cliente"):
             ok,msg,cid=add_client(data,first,last,phone,email,notes,birth); (st.success if ok else st.error)(msg)
             if ok: save_data(data,sha,"Add client"); st.rerun()
     if cid:
@@ -294,11 +292,14 @@ with tab3:
     if dfc.empty: st.info("Nessun cliente presente.")
     else:
         q=st.text_input("Cerca cliente").lower().strip(); view=dfc[dfc.apply(lambda r:q in " ".join(map(str,r.values)).lower(),axis=1)] if q else dfc
-        st.dataframe(view[["Cognome","Nome","Ultima lezione"]],use_container_width=True,hide_index=True)
-        opts=[f"{r.Cognome} {r.Nome} | ultima lezione: {r._asdict().get('Ultima lezione','')} | {r.ID}" for r in view.itertuples(index=False)]
-        selected=st.selectbox("Apri scheda cliente",opts) if opts else None
-        if selected:
-            cid=selected.split("|")[-1].strip(); c=get_client(data,cid)
+        view=view.reset_index(drop=True)
+        st.caption("Clicca una riga della tabella per aprire la scheda cliente.")
+        event=st.dataframe(view[["Cognome","Nome","Ultima lezione"]],use_container_width=True,hide_index=True,on_select="rerun",selection_mode="single-row",key="client_table_in_main")
+        selected_rows=[]
+        try: selected_rows=event.selection.rows
+        except Exception: selected_rows=[]
+        if selected_rows:
+            cid=view.iloc[selected_rows[0]]["ID"]; c=get_client(data,cid)
             if c:
                 st.markdown(f"### Scheda anagrafica: {full_name(c)}")
                 a,b=st.columns(2); last=a.text_input("Cognome",value=c.get("last_name",""),key=f"sl{cid}"); first=b.text_input("Nome",value=c.get("first_name",""),key=f"sf{cid}")
@@ -315,6 +316,8 @@ with tab3:
                     st.markdown("#### Storico lezioni")
                     hist=pd.DataFrame([{"Data":date_it(b.get("date")),"Ora":b.get("time"),"Istruttrice":b.get("instructor"),"Stato":b.get("status"),"Importo":money(b.get("amount",0)),"Pagato":bool(b.get("paid",False)),"Note":b.get("note","")} for b in client_bks]).sort_values(["Data","Ora"])
                     st.dataframe(hist,use_container_width=True,hide_index=True)
+        else:
+            st.info("Seleziona una riga della tabella per visualizzare e modificare la scheda.")
 with tab4:
     st.subheader("Cerca")
     q=st.text_input("Cerca per nome, telefono o email").lower().strip(); dfa=archive_df(data)
