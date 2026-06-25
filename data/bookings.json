@@ -203,6 +203,23 @@
       "paid": false,
       "instructor": "Alice",
       "created_by": "staff"
+    },
+    {
+      "id": "b_20260625135714156416",
+      "created_at": "2026-06-25T13:57:14",
+      "client_id": "c_20260625135632136796",
+      "date": "2026-07-21",
+      "day": "Martedì",
+      "time": "10:30",
+      "name": "Billi Rita",
+      "phone": "+39 347 254 2182",
+      "email": "",
+      "note": "",
+      "status": "Confermata",
+      "amount": 30.0,
+      "paid": false,
+      "instructor": "Alice",
+      "created_by": "staff"
     }
   ],
   "clients": [
