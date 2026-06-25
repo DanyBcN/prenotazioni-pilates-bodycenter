@@ -82,6 +82,13 @@ def bc_sync_mobile_mode():
 
 def bc_is_mobile_client():
     try:
+        headers = getattr(st, "context", None).headers
+        ua = str(headers.get("user-agent", headers.get("User-Agent", ""))).lower()
+    except Exception:
+        ua = ""
+    if any(t in ua for t in ["iphone", "android", "mobile", "ipad", "ipod"]):
+        return True
+    try:
         flag = str(st.query_params.get("_bc_mobile", "")).lower()
         if flag in {"1", "true", "yes", "mobile"}:
             return True
@@ -89,12 +96,7 @@ def bc_is_mobile_client():
             return False
     except Exception:
         pass
-    try:
-        headers = getattr(st, "context", None).headers
-        ua = str(headers.get("user-agent", headers.get("User-Agent", ""))).lower()
-    except Exception:
-        ua = ""
-    return any(t in ua for t in ["iphone", "android", "mobile", "ipad", "ipod"])
+    return False
 
 
 def bc_archive_mobile_cards(df):
@@ -129,6 +131,13 @@ def bc_archive_mobile_cards(df):
 '''
     if "def bc_is_mobile_client" not in text:
         text = text.replace("\n\ndef render_archive(data, sha):\n", helpers + "\n\ndef render_archive(data, sha):\n")
+    else:
+        text = re.sub(
+            r'def bc_is_mobile_client\(\):\n.*?\n\ndef bc_archive_mobile_cards',
+            helpers.split("def bc_archive_mobile_cards", 1)[0].lstrip("\n") + "\ndef bc_archive_mobile_cards",
+            text,
+            flags=re.S,
+        )
 
     new_render_archive = r'''def render_archive(data, sha):
     st.subheader("Archivio, pagamenti e statistiche")
