@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 
 def _repair_app_source():
@@ -9,53 +10,61 @@ def _repair_app_source():
     text = path.read_text(encoding="utf-8")
     original = text
 
-    def indent_len(s):
-        return len(s) - len(s.lstrip(" "))
+    # 1) Remove all broken Python mobile-control fragments created by previous runtime patches.
+    patterns = [
+        r'(?m)^    sync_mobile_mode\(\)\n',
+        r'(?m)^    archive_mobile_html\(df\)\n',
+        r'(?m)^    if is_mobile_client\(\):\n        return\n',
+        r'(?m)^    if not is_mobile_client\(\):\n(?=    if not is_mobile_client\(\):)',
+        r'(?m)^    if not is_mobile_client\(\):\n(?!        )',
+    ]
+    for pat in patterns:
+        text = re.sub(pat, '', text)
 
-    # Remove empty duplicated mobile guards left by previous runtime patches.
-    for _ in range(20):
-        lines = text.splitlines(True)
-        out = []
-        changed = False
-        i = 0
-        while i < len(lines):
-            line = lines[i]
-            stripped = line.strip()
-            if stripped == "if not is_mobile_client():":
-                current_indent = indent_len(line)
-                j = i + 1
-                while j < len(lines) and lines[j].strip() == "":
-                    j += 1
-                if j >= len(lines):
-                    changed = True
-                    i += 1
-                    continue
-                next_line = lines[j]
-                next_indent = indent_len(next_line)
-                # Empty if: next real line is not indented under it, or is another identical if.
-                if next_line.strip() == "if not is_mobile_client():" or next_indent <= current_indent:
-                    changed = True
-                    i += 1
-                    continue
-            out.append(line)
-            i += 1
-        text = "".join(out)
-        if not changed:
-            break
-
-    # Repair the specific broken variants seen in Streamlit Cloud.
+    # 2) Fix the specific duplicated/empty if variants seen in Streamlit Cloud.
     text = text.replace(
         "    if not is_mobile_client():\n    if not is_mobile_client():\n        st.dataframe(per, use_container_width=True, hide_index=True)\n",
-        "    if not is_mobile_client():\n        st.dataframe(per, use_container_width=True, hide_index=True)\n",
+        "    st.dataframe(per, use_container_width=True, hide_index=True)\n",
     )
     text = text.replace(
         "    if not is_mobile_client():\n    st.dataframe(per, use_container_width=True, hide_index=True)\n",
-        "    if not is_mobile_client():\n        st.dataframe(per, use_container_width=True, hide_index=True)\n",
+        "    st.dataframe(per, use_container_width=True, hide_index=True)\n",
     )
 
-    # Remove the riskiest mobile stop block if it was duplicated.
-    while text.count("    archive_mobile_html(df)\n    if is_mobile_client():\n        return\n") > 1:
-        text = text.replace("    archive_mobile_html(df)\n    if is_mobile_client():\n        return\n", "", 1)
+    # 3) Hide broken/duplicate helper functions if present by neutralizing only their use, not inserting new Python control flow.
+    text = text.replace("import streamlit.components.v1 as components\n", "")
+
+    # 4) Add one safe CSS rule only: mobile hides tables/components; desktop hides mobile cards.
+    css_safe = '''
+    .mobile-archive { display:none !important; }
+    @media (max-width:760px) {
+        .mobile-archive { display:block !important; }
+        div[data-testid="stCustomComponentV1"],
+        div[data-testid="stDataFrame"],
+        div[data-testid="stDataEditor"],
+        .ag-root-wrapper,
+        .ag-theme-streamlit {
+            display:none !important;
+            height:0 !important;
+            max-height:0 !important;
+            overflow:hidden !important;
+        }
+    }
+    @media (min-width:761px) {
+        .mobile-archive { display:none !important; }
+    }
+'''
+    if '.mobile-archive' not in text:
+        text = text.replace('    .stApp { background: #fbfcfb; }\n', '    .stApp { background: #fbfcfb; }\n' + css_safe)
+
+    # 5) Keep simple stable archive ordering by client if possible.
+    text = text.replace(
+        'return df.sort_values(["_sort", "Ora", "Cliente"]).drop(columns=["_sort"]).reset_index(drop=True)',
+        'return df.sort_values(["Cliente", "_sort", "Ora"]).drop(columns=["_sort"]).reset_index(drop=True)',
+    )
+
+    # 6) Remove duplicate JsCode imports if previous patches created them.
+    text = text.replace(', JsCode, JsCode', ', JsCode')
 
     if text != original:
         path.write_text(text, encoding="utf-8")
