@@ -27,11 +27,7 @@ def github_enabled():
 
 
 def headers():
-    return {
-        "Authorization": f"Bearer {get_secret('GITHUB_TOKEN')}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
+    return {"Authorization": f"Bearer {get_secret('GITHUB_TOKEN')}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
 
 
 def url():
@@ -134,13 +130,7 @@ def clients_table(data, sort_by):
     rows = []
     for c in data.get("clients", []):
         lv = last_visit(data, c.get("id"))
-        rows.append({
-            "ID": c.get("id"),
-            "Cognome": c.get("last_name", ""),
-            "Nome": c.get("first_name", ""),
-            "Ultima lezione": date_it(lv) if lv else "",
-            "_last": lv or date(1900, 1, 1),
-        })
+        rows.append({"ID": c.get("id"), "Cognome": c.get("last_name", ""), "Nome": c.get("first_name", ""), "Ultima lezione": date_it(lv) if lv else "", "_last": lv or date(1900, 1, 1)})
     df = pd.DataFrame(rows)
     if df.empty:
         return df
@@ -165,16 +155,7 @@ def update_client(data, cid, first, last, phone, email, birth, notes, anamnesis,
     for other in data.get("clients", []):
         if other.get("id") != cid and key(other.get("first_name", ""), other.get("last_name", "")) == new_key:
             return False, "Esiste già un altro cliente con lo stesso nome e cognome."
-    c.update({
-        "first_name": first,
-        "last_name": last,
-        "phone": phone.strip(),
-        "email": email.strip(),
-        "birth_date": birth.strip(),
-        "notes": notes.strip(),
-        "anamnesis": anamnesis.strip(),
-        "goals": goals.strip(),
-    })
+    c.update({"first_name": first, "last_name": last, "phone": phone.strip(), "email": email.strip(), "birth_date": birth.strip(), "notes": notes.strip(), "anamnesis": anamnesis.strip(), "goals": goals.strip()})
     for b in data.get("bookings", []):
         if b.get("client_id") == cid:
             b["name"] = full_name(c)
@@ -183,40 +164,12 @@ def update_client(data, cid, first, last, phone, email, birth, notes, anamnesis,
     return True, "Scheda cliente aggiornata."
 
 
-def render_clickable_table(df):
-    rows = []
-    for _, r in df.iterrows():
-        cid = quote(str(r["ID"]))
-        cognome = html.escape(str(r["Cognome"]))
-        nome = html.escape(str(r["Nome"]))
-        ultima = html.escape(str(r["Ultima lezione"]))
-        rows.append(
-            f"<tr>"
-            f"<td><a href='?client_id={cid}' style='font-weight:700;color:#1f5c8f;text-decoration:none'>{cognome}</a></td>"
-            f"<td>{nome}</td>"
-            f"<td>{ultima}</td>"
-            f"</tr>"
-        )
-    table = """
-    <style>
-    .client-table {width:100%; border-collapse:collapse; font-size:15px;}
-    .client-table th {text-align:left; background:#f4f6f8; padding:10px; border:1px solid #e1e4e8;}
-    .client-table td {padding:10px; border:1px solid #e1e4e8;}
-    .client-table tr:hover {background:#eef6f2;}
-    </style>
-    <table class='client-table'>
-      <thead><tr><th>Cognome</th><th>Nome</th><th>Ultima lezione</th></tr></thead>
-      <tbody>
-    """ + "\n".join(rows) + "</tbody></table>"
-    st.markdown(table, unsafe_allow_html=True)
-
-
 st.set_page_config(page_title="Archivio clienti", page_icon="👤", layout="wide")
 
 if Path(LOGO_PATH).exists():
     st.image(LOGO_PATH, width=110)
 st.title("Archivio clienti")
-st.caption("Clicca direttamente sul cognome per aprire la scheda cliente.")
+st.caption("Clicca una riga della tabella per aprire direttamente la scheda cliente.")
 
 pwd = st.sidebar.text_input("Password", type="password")
 if pwd != get_secret("APP_PASSWORD", "pilates123"):
@@ -240,13 +193,27 @@ if df.empty:
     st.info("Nessun cliente presente.")
     st.stop()
 
-render_clickable_table(df)
+visible_df = df[["Cognome", "Nome", "Ultima lezione"]]
+event = st.dataframe(
+    visible_df,
+    use_container_width=True,
+    hide_index=True,
+    on_select="rerun",
+    selection_mode="single-row",
+    key="client_row_selection",
+)
 
-selected_id = st.query_params.get("client_id", "")
-if not selected_id:
-    st.info("Clicca un cognome nella tabella per aprire la scheda.")
+selected_rows = []
+try:
+    selected_rows = event.selection.rows
+except Exception:
+    selected_rows = []
+
+if not selected_rows:
+    st.info("Seleziona una riga della tabella per aprire la scheda cliente.")
     st.stop()
 
+selected_id = df.iloc[selected_rows[0]]["ID"]
 c = get_client(data, selected_id)
 if not c:
     st.error("Cliente non trovato.")
@@ -277,15 +244,7 @@ if st.button("Salva scheda cliente", type="primary"):
 history = []
 for bkg in data.get("bookings", []):
     if bkg.get("client_id") == selected_id:
-        history.append({
-            "Data": date_it(bkg.get("date")),
-            "Ora": bkg.get("time", ""),
-            "Istruttrice": bkg.get("instructor", ""),
-            "Stato": bkg.get("status", ""),
-            "Importo": bkg.get("amount", 0),
-            "Pagato": bool(bkg.get("paid", False)),
-            "Note": bkg.get("note", ""),
-        })
+        history.append({"Data": date_it(bkg.get("date")), "Ora": bkg.get("time", ""), "Istruttrice": bkg.get("instructor", ""), "Stato": bkg.get("status", ""), "Importo": bkg.get("amount", 0), "Pagato": bool(bkg.get("paid", False)), "Note": bkg.get("note", "")})
 if history:
     st.markdown("### Storico lezioni")
     st.dataframe(pd.DataFrame(history), use_container_width=True, hide_index=True)
