@@ -22,7 +22,7 @@
       "date": "2026-06-26",
       "day": "Venerdì",
       "time": "14:00",
-      "name": "Vilma",
+      "name": "Montersino Vilma",
       "phone": "3395817122",
       "note": "",
       "status": "Confermata",
@@ -30,7 +30,8 @@
       "paid": true,
       "instructor": "Grazia",
       "created_by": "staff",
-      "client_id": "c_20260625000100987054"
+      "client_id": "c_20260625000100987054",
+      "email": ""
     },
     {
       "id": "20260624224436315038",
@@ -121,16 +122,22 @@
       "phone": "3936561839",
       "email": "",
       "notes": "",
-      "created_at": "2026-06-25T00:01:00"
+      "created_at": "2026-06-25T00:01:00",
+      "birth_date": "",
+      "anamnesis": "",
+      "goals": ""
     },
     {
       "id": "c_20260625000100987054",
       "first_name": "Vilma",
-      "last_name": "",
+      "last_name": "Montersino",
       "phone": "3395817122",
       "email": "",
       "notes": "",
-      "created_at": "2026-06-25T00:01:00"
+      "created_at": "2026-06-25T00:01:00",
+      "birth_date": "",
+      "anamnesis": "",
+      "goals": ""
     },
     {
       "id": "c_20260625000100987069",
@@ -139,7 +146,10 @@
       "phone": "3482768714",
       "email": "",
       "notes": "",
-      "created_at": "2026-06-25T00:01:00"
+      "created_at": "2026-06-25T00:01:00",
+      "birth_date": "",
+      "anamnesis": "",
+      "goals": ""
     },
     {
       "id": "c_20260625000100987082",
@@ -148,7 +158,10 @@
       "phone": "3483122325",
       "email": "",
       "notes": "",
-      "created_at": "2026-06-25T00:01:00"
+      "created_at": "2026-06-25T00:01:00",
+      "birth_date": "",
+      "anamnesis": "",
+      "goals": ""
     },
     {
       "id": "c_20260625000100987094",
@@ -157,7 +170,10 @@
       "phone": "3483122325",
       "email": "",
       "notes": "",
-      "created_at": "2026-06-25T00:01:00"
+      "created_at": "2026-06-25T00:01:00",
+      "birth_date": "",
+      "anamnesis": "",
+      "goals": ""
     },
     {
       "id": "c_20260625000100987105",
@@ -166,7 +182,10 @@
       "phone": "3495662839",
       "email": "",
       "notes": "",
-      "created_at": "2026-06-25T00:01:00"
+      "created_at": "2026-06-25T00:01:00",
+      "birth_date": "",
+      "anamnesis": "",
+      "goals": ""
     },
     {
       "id": "c_20260625000100987115",
@@ -175,7 +194,10 @@
       "phone": "3331546986",
       "email": "",
       "notes": "",
-      "created_at": "2026-06-25T00:01:00"
+      "created_at": "2026-06-25T00:01:00",
+      "birth_date": "",
+      "anamnesis": "",
+      "goals": ""
     }
   ]
 }
