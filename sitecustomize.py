@@ -104,25 +104,28 @@ def clients_mobile_cards(view, data, sha):
     if 'def archive_mobile_cards(' not in text:
         text = text.replace(marker, mobile_functions + marker)
 
+    clients_toggle = '''    if st.toggle("📱 Vista compatta telefono", key="clients_mobile_view"):
+        clients_mobile_cards(view, data, sha)
+        return
+'''
+    archive_toggle = '''    if st.toggle("📱 Vista compatta telefono", key="archive_mobile_view"):
+        archive_mobile_cards(df, data, sha)
+        return
+'''
+    text = text.replace(clients_toggle, '')
+    text = text.replace(archive_toggle, '')
+
     old_clients_view = '''    st.caption("Tabella clienti: clicca una riga per aprire la scheda qui sotto.")
     selected = client_grid(view, "client_grid")
 '''
-    new_clients_view = '''    if st.toggle("📱 Vista compatta telefono", key="clients_mobile_view"):
-        clients_mobile_cards(view, data, sha)
-        return
-    st.caption("Tabella clienti: clicca una riga per aprire la scheda qui sotto.")
-    selected = client_grid(view, "client_grid")
-'''
+    new_clients_view = clients_toggle + old_clients_view
     text = text.replace(old_clients_view, new_clients_view)
 
     old_archive_view = '''    st.caption("Colonne editabili evidenziate: Email, Importo, Pagato e Note cliente. Clicca una riga per aprire la scheda cliente sotto.")
     grid_key = f"archive_grid_{st.session_state.get('archive_nonce', 0)}"
 '''
     new_archive_view = '''    st.caption("Colonne editabili evidenziate: Email, Importo, Pagato e Note cliente. Clicca una riga per aprire la scheda cliente sotto.")
-    if st.toggle("📱 Vista compatta telefono", key="archive_mobile_view"):
-        archive_mobile_cards(df, data, sha)
-        return
-    grid_key = f"archive_grid_{st.session_state.get('archive_nonce', 0)}"
+''' + archive_toggle + '''    grid_key = f"archive_grid_{st.session_state.get('archive_nonce', 0)}"
 '''
     text = text.replace(old_archive_view, new_archive_view)
 
