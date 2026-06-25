@@ -55,7 +55,7 @@
       "date": "2026-07-02",
       "day": "Giovedì",
       "time": "17:00",
-      "name": "Chiara Marcenaro",
+      "name": "Marcenaro Chiara",
       "phone": "3483122325",
       "note": "",
       "status": "Confermata",
@@ -63,7 +63,8 @@
       "paid": false,
       "instructor": "Grazia",
       "created_by": "staff",
-      "client_id": "c_20260625000100987082"
+      "client_id": "c_20260625000100987082",
+      "email": ""
     },
     {
       "id": "20260624224630933994",
@@ -156,8 +157,8 @@
     },
     {
       "id": "c_20260625000100987082",
-      "first_name": "Marcenaro",
-      "last_name": "Chiara",
+      "first_name": "Chiara",
+      "last_name": "Marcenaro",
       "phone": "3483122325",
       "email": "",
       "notes": "",
