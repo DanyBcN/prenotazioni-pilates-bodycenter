@@ -138,6 +138,73 @@ def _patch_app_source():
 '''
     )
 
+    old_make_pdf = '''def make_pdf(df, label=""):
+    bio = BytesIO()
+    doc = SimpleDocTemplate(bio, pagesize=landscape(A4), rightMargin=.6*cm, leftMargin=.6*cm, topMargin=.7*cm, bottomMargin=.7*cm)
+    styles = getSampleStyleSheet()
+    elems = []
+    if Path(LOGO_PATH).exists():
+        elems.append(Image(LOGO_PATH, width=2.0*cm, height=3.0*cm))
+    elems += [Paragraph("Archivio prenotazioni Pilates - Body Center", styles["Title"]), Paragraph(label, styles["Normal"]), Spacer(1, .25*cm)]
+    cols = ["Data", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Importo", "Pagato", "Note cliente"]
+    pdf = df[cols].copy() if not df.empty else pd.DataFrame(columns=cols)
+    pdf["Pagato"] = pdf["Pagato"].map(lambda x: "Sì" if to_bool(x) else "No")
+    pdf["Importo"] = pdf["Importo"].map(lambda x: f"€ {money(x):.2f}")
+    data = [cols] + pdf.fillna("").astype(str).values.tolist()
+    tab = Table(data, repeatRows=1)
+    tab.setStyle(TableStyle([("BACKGROUND", (0,0), (-1,0), colors.HexColor(GREEN)), ("TEXTCOLOR", (0,0), (-1,0), colors.white), ("GRID", (0,0), (-1,-1), .25, colors.lightgrey), ("VALIGN", (0,0), (-1,-1), "MIDDLE")]))
+    elems.append(tab)
+    doc.build(elems)
+    bio.seek(0)
+    return bio.getvalue()
+'''
+    new_make_pdf = '''def make_pdf(df, label=""):
+    bio = BytesIO()
+    doc = SimpleDocTemplate(bio, pagesize=landscape(A4), rightMargin=.6*cm, leftMargin=.6*cm, topMargin=.7*cm, bottomMargin=.7*cm)
+    styles = getSampleStyleSheet()
+    elems = []
+    if Path(LOGO_PATH).exists():
+        elems.append(Image(LOGO_PATH, width=2.0*cm, height=3.0*cm))
+    elems += [Paragraph("Archivio prenotazioni Pilates - Body Center", styles["Title"]), Paragraph(label, styles["Normal"]), Spacer(1, .25*cm)]
+
+    w = df.copy() if not df.empty else pd.DataFrame(columns=["Istruttrice", "Stato", "Importo", "Pagato"])
+    if not w.empty:
+        w["Importo"] = pd.to_numeric(w.get("Importo", 0), errors="coerce").fillna(0)
+        w["Pagato_bool"] = w.get("Pagato", False).apply(to_bool)
+        w = w[w.get("Stato", "") != "Annullata"]
+    total = float(w["Importo"].sum()) if not w.empty else 0.0
+    paid = float(w.loc[w["Pagato_bool"] == True, "Importo"].sum()) if not w.empty and "Pagato_bool" in w else 0.0
+    unpaid = total - paid
+
+    incassi = [["Riepilogo incassi", "Importo"], ["Totale complessivo", f"€ {total:.2f}"], ["Totale pagato", f"€ {paid:.2f}"], ["Totale non pagato", f"€ {unpaid:.2f}"]]
+    inc_tab = Table(incassi, colWidths=[6*cm, 4*cm])
+    inc_tab.setStyle(TableStyle([("BACKGROUND", (0,0), (-1,0), colors.HexColor(GREEN)), ("TEXTCOLOR", (0,0), (-1,0), colors.white), ("GRID", (0,0), (-1,-1), .25, colors.lightgrey), ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold")]))
+    elems += [inc_tab, Spacer(1, .25*cm)]
+
+    per_rows = [["Istruttrice", "Totale complessivo", "Totale pagato", "Totale non pagato"]]
+    for istr in INSTRUCTORS:
+        s = w[w.get("Istruttrice", "") == istr] if not w.empty else w
+        it = float(s["Importo"].sum()) if not s.empty else 0.0
+        ip = float(s.loc[s["Pagato_bool"] == True, "Importo"].sum()) if not s.empty and "Pagato_bool" in s else 0.0
+        per_rows.append([istr, f"€ {it:.2f}", f"€ {ip:.2f}", f"€ {it - ip:.2f}"])
+    per_tab = Table(per_rows, colWidths=[4*cm, 4*cm, 4*cm, 4*cm])
+    per_tab.setStyle(TableStyle([("BACKGROUND", (0,0), (-1,0), colors.HexColor("#6f8f68")), ("TEXTCOLOR", (0,0), (-1,0), colors.white), ("GRID", (0,0), (-1,-1), .25, colors.lightgrey), ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold")]))
+    elems += [per_tab, Spacer(1, .35*cm)]
+
+    cols = ["Data", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Importo", "Pagato", "Note cliente"]
+    pdf = df[cols].copy() if not df.empty else pd.DataFrame(columns=cols)
+    pdf["Pagato"] = pdf["Pagato"].map(lambda x: "Sì" if to_bool(x) else "No")
+    pdf["Importo"] = pdf["Importo"].map(lambda x: f"€ {money(x):.2f}")
+    data = [cols] + pdf.fillna("").astype(str).values.tolist()
+    tab = Table(data, repeatRows=1)
+    tab.setStyle(TableStyle([("BACKGROUND", (0,0), (-1,0), colors.HexColor(GREEN)), ("TEXTCOLOR", (0,0), (-1,0), colors.white), ("GRID", (0,0), (-1,-1), .25, colors.lightgrey), ("VALIGN", (0,0), (-1,-1), "MIDDLE"), ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold")]))
+    elems.append(tab)
+    doc.build(elems)
+    bio.seek(0)
+    return bio.getvalue()
+'''
+    text = text.replace(old_make_pdf, new_make_pdf)
+
     # Force AgGrid to rebuild after editing a client from Archivio/Clienti.
     text = text.replace(
         '''        if ok:
