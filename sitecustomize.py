@@ -17,15 +17,15 @@ try:
         except Exception:
             return False
 
-    def AgGrid_archive_selection_guard(*args, **kwargs):
+    def AgGrid_selection_guard(*args, **kwargs):
         response = _OriginalAgGrid(*args, **kwargs)
         key = str(kwargs.get("key", ""))
-        if key.startswith("archive_grid"):
+        if key.startswith("archive_grid") or key.startswith("client_grid"):
             selected = response.get("selected_rows", []) if isinstance(response, dict) else []
             if not _has_selected_rows(selected):
                 st.session_state.pop("open_client_id", None)
         return response
 
-    _st_aggrid.AgGrid = AgGrid_archive_selection_guard
+    _st_aggrid.AgGrid = AgGrid_selection_guard
 except Exception:
     pass
