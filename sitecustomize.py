@@ -14,7 +14,6 @@ def _patch_app_source():
     text = path.read_text(encoding="utf-8")
     original = text
 
-    # Required client fields.
     text = _replace(
         text,
         '''def add_client(data, first, last, phone="", email="", notes="", birth_date="", anamnesis="", goals=""):
@@ -29,14 +28,9 @@ def _patch_app_source():
 '''
     )
 
-    # JsCode is needed for chronological sorting of the pretty date column.
-    text = _replace(
-        text,
-        "from st_aggrid import AgGrid, DataReturnMode, GridOptionsBuilder, GridUpdateMode",
-        "from st_aggrid import AgGrid, DataReturnMode, GridOptionsBuilder, GridUpdateMode, JsCode",
-    )
+    text = _replace(text, "import streamlit as st\n", "import streamlit as st\nimport streamlit.components.v1 as components\n")
+    text = _replace(text, "from st_aggrid import AgGrid, DataReturnMode, GridOptionsBuilder, GridUpdateMode", "from st_aggrid import AgGrid, DataReturnMode, GridOptionsBuilder, GridUpdateMode, JsCode")
 
-    # Better header.
     text = _replace(
         text,
         '''def render_header():
@@ -68,7 +62,6 @@ def _patch_app_source():
 '''
     )
 
-    # Responsive CSS: PC table, mobile cards.
     css_marker = '''    .stApp {{ background: #fbfcfb; }}
 '''
     css_insert = '''    .stApp {{ background: #fbfcfb; }}
@@ -82,7 +75,7 @@ def _patch_app_source():
     @media (max-width:760px) {{
         .block-container {{ padding-left:.55rem !important; padding-right:.55rem !important; max-width:100% !important; }}
         .mobile-archive {{ display:block !important; }}
-        div[data-testid="stCustomComponentV1"], .ag-root-wrapper, .ag-theme-streamlit {{ display:none !important; }}
+        div[data-testid="stCustomComponentV1"], div[data-testid="stDataFrame"], div[data-testid="stDataEditor"], .ag-root-wrapper, .ag-theme-streamlit {{ display:none !important; height:0 !important; overflow:hidden !important; }}
     }}
     @media (min-width:761px) {{
         .mobile-archive {{ display:none !important; }}
@@ -91,28 +84,19 @@ def _patch_app_source():
     if ".mobile-archive" not in text and css_marker in text:
         text = text.replace(css_marker, css_insert)
 
-    # Archive: remove audit column and sort rows by client surname/name by default.
     text = text.replace(', "Inserita il", "ID", "Client ID"', ', "ID", "Client ID"')
     text = text.replace(', "Inserita il", "ID", "Client ID"]', ', "ID", "Client ID"]')
     text = text.replace(', "Inserita il": b.get("created_at")', '')
     text = text.replace('    gb.configure_column("Inserita il", editable=False, width=170, cellStyle=cell_style("center"))\n', '')
     text = text.replace('    gb.configure_column("Inserita il", editable=False, width=168, cellStyle=cell_style("center"))\n', '')
-    text = text.replace(
-        'return df.sort_values(["_sort", "Ora", "Cliente"]).drop(columns=["_sort"]).reset_index(drop=True)',
-        'return df.sort_values(["Cliente", "_sort", "Ora"]).drop(columns=["_sort"]).reset_index(drop=True)',
-    )
+    text = text.replace('return df.sort_values(["_sort", "Ora", "Cliente"]).drop(columns=["_sort"]).reset_index(drop=True)', 'return df.sort_values(["Cliente", "_sort", "Ora"]).drop(columns=["_sort"]).reset_index(drop=True)')
 
-    # Force AgGrid itself to open sorted by Cliente on PC.
-    text = text.replace(
+    text = _replace(
+        text,
         '    gb.configure_column("Cliente", editable=False, width=230, pinned="left", cellStyle=cell_style("left", bold=True, color="#1f5c8f"))\n',
         '    gb.configure_column("Cliente", editable=False, width=230, pinned="left", sort="asc", sortIndex=0, cellStyle=cell_style("left", bold=True, color="#1f5c8f"))\n'
     )
-    text = text.replace(
-        '    gb.configure_column("Cliente", editable=False, width=230, pinned="left", sort="asc", sortIndex=0, cellStyle=cell_style("left", bold=True, color="#1f5c8f"))\n',
-        '    gb.configure_column("Cliente", editable=False, width=230, pinned="left", sort="asc", sortIndex=0, cellStyle=cell_style("left", bold=True, color="#1f5c8f"))\n'
-    )
 
-    # Sort Data by hidden ISO value when the user clicks the column.
     text = text.replace(
         '    gb.configure_column("Data", editable=False, width=160, cellStyle=cell_style("center"))\n',
         '''    gb.configure_column(
@@ -134,7 +118,6 @@ def _patch_app_source():
 '''
     )
 
-    # PDF with revenue summary.
     new_make_pdf = '''def make_pdf(df, label=""):
     bio = BytesIO()
     doc = SimpleDocTemplate(bio, pagesize=landscape(A4), rightMargin=.6*cm, leftMargin=.6*cm, topMargin=.7*cm, bottomMargin=.7*cm)
@@ -182,7 +165,6 @@ def _patch_app_source():
 '''
     text = re.sub(r'def make_pdf\(df, label=""\):\n.*?\n\ndef app_css\(\):', new_make_pdf + '\n\ndef app_css():', text, flags=re.S)
 
-    # Refresh and close client card after saving.
     text = _replace(
         text,
         '''        if ok:
@@ -215,10 +197,36 @@ st.divider()
 '''
     )
 
-    # Mobile archive helpers.
     mobile_helpers = '''
 
+def sync_mobile_mode():
+    try:
+        components.html("""
+        <script>
+        try {
+          const mobile = (window.parent.innerWidth || window.innerWidth || 1200) <= 760;
+          const url = new URL(window.parent.location.href);
+          const val = mobile ? "1" : "0";
+          if (url.searchParams.get("_bc_mobile") !== val) {
+            url.searchParams.set("_bc_mobile", val);
+            window.parent.location.replace(url.toString());
+          }
+        } catch(e) {}
+        </script>
+        """, height=0)
+    except Exception:
+        pass
+
+
 def is_mobile_client():
+    try:
+        flag = str(st.query_params.get("_bc_mobile", "")).lower()
+        if flag in {"1", "true", "yes", "mobile"}:
+            return True
+        if flag in {"0", "false", "no", "desktop"}:
+            return False
+    except Exception:
+        pass
     try:
         headers = getattr(st, "context", None).headers
         ua = str(headers.get("user-agent", headers.get("User-Agent", ""))).lower()
@@ -256,12 +264,16 @@ def archive_mobile_html(df):
     st.markdown("<div class='mobile-archive'>" + "".join(cards) + "</div>", unsafe_allow_html=True)
 '''
     marker = '\n\ndef render_archive(data, sha):\n'
-    if 'def is_mobile_client(' not in text:
+    if 'def sync_mobile_mode(' not in text:
         text = text.replace(marker, mobile_helpers + marker)
 
-    insert_marker = '    st.markdown("#### Modifica importi, pagamenti e note")\n'
     text = text.replace('    archive_mobile_html(df)\n    if is_mobile_client():\n        return\n', '')
     text = text.replace('    archive_mobile_html(df)\n', '')
+    text = text.replace('    sync_mobile_mode()\n', '')
+
+    text = text.replace('    total, paid, unpaid, per = summary(dfp)\n', '    sync_mobile_mode()\n    total, paid, unpaid, per = summary(dfp)\n')
+    text = text.replace('    st.dataframe(per, use_container_width=True, hide_index=True)\n', '    if not is_mobile_client():\n        st.dataframe(per, use_container_width=True, hide_index=True)\n')
+    insert_marker = '    st.markdown("#### Modifica importi, pagamenti e note")\n'
     text = text.replace(insert_marker, '    archive_mobile_html(df)\n    if is_mobile_client():\n        return\n' + insert_marker)
 
     if text != original:
