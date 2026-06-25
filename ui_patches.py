@@ -14,6 +14,149 @@ def _logo_data_uri():
     return f"data:image/png;base64,{data}"
 
 
+def _cell_style(align="center", editable=False, bold=False, color=None):
+    justify = {"left": "flex-start", "right": "flex-end", "center": "center"}.get(align, "center")
+    style = {
+        "display": "flex",
+        "alignItems": "center",
+        "justifyContent": justify,
+        "textAlign": align,
+        "fontSize": "13px",
+        "lineHeight": "1.25",
+        "paddingLeft": "12px",
+        "paddingRight": "12px",
+        "whiteSpace": "normal",
+    }
+    if editable:
+        style["backgroundColor"] = "#fffdf0"
+    if bold:
+        style["fontWeight"] = "700"
+    if color:
+        style["color"] = color
+    return style
+
+
+def _grid_css(extra=None):
+    css = dict(extra or {})
+    css.update({
+        ".ag-root-wrapper": {
+            "border": "1px solid #d8e2d7 !important",
+            "border-radius": "14px !important",
+            "overflow": "hidden !important",
+            "box-shadow": "0 4px 14px rgba(36,49,66,0.05) !important",
+        },
+        ".ag-header": {
+            "background-color": "#edf5ef !important",
+            "border-bottom": "1px solid #d7e3d7 !important",
+        },
+        ".ag-header-cell": {
+            "padding-left": "10px !important",
+            "padding-right": "10px !important",
+        },
+        ".ag-header-cell-label": {
+            "justify-content": "center !important",
+            "text-align": "center !important",
+        },
+        ".ag-header-cell-text": {
+            "font-weight": "700 !important",
+            "font-size": "13px !important",
+            "line-height": "1.15 !important",
+            "white-space": "normal !important",
+        },
+        ".ag-cell": {
+            "padding-left": "12px !important",
+            "padding-right": "12px !important",
+            "font-size": "13px !important",
+            "line-height": "1.25 !important",
+            "display": "flex !important",
+            "align-items": "center !important",
+        },
+        ".ag-row": {"cursor": "pointer !important"},
+        ".ag-row-hover": {"background-color": "#f3f8f3 !important"},
+        ".ag-cell[col-id='Cliente']": {"justify-content": "flex-start !important", "font-weight": "700", "color": "#1f5c8f"},
+        ".ag-cell[col-id='Telefono']": {"justify-content": "flex-start !important"},
+        ".ag-cell[col-id='Email']": {"justify-content": "flex-start !important", "background-color": "#fffdf0 !important"},
+        ".ag-cell[col-id='Note cliente']": {"justify-content": "flex-start !important", "background-color": "#fffdf0 !important"},
+        ".ag-cell[col-id='Note prenotazione']": {"justify-content": "flex-start !important", "background-color": "#fffdf0 !important"},
+        ".ag-cell[col-id='Importo']": {"justify-content": "flex-end !important", "background-color": "#fffdf0 !important"},
+        ".ag-cell[col-id='Pagato']": {"justify-content": "center !important", "background-color": "#fffdf0 !important"},
+    })
+    return css
+
+
+def _apply_archive_grid_options(grid_options):
+    if not isinstance(grid_options, dict):
+        return grid_options
+
+    grid_options.setdefault("defaultColDef", {})
+    grid_options["defaultColDef"].update({
+        "sortable": True,
+        "filter": True,
+        "resizable": True,
+        "wrapHeaderText": False,
+        "autoHeaderHeight": False,
+        "cellStyle": _cell_style("center"),
+        "minWidth": 90,
+    })
+
+    grid_options.update({
+        "rowHeight": 48,
+        "headerHeight": 58,
+        "suppressHorizontalScroll": False,
+        "enableCellTextSelection": True,
+        "suppressColumnVirtualisation": False,
+        "alwaysShowHorizontalScroll": True,
+    })
+
+    col_map = {
+        "Elimina": {"headerName": "Elimina", "width": 96, "minWidth": 90, "maxWidth": 105, "pinned": "left", "cellStyle": _cell_style("center")},
+        "Cliente": {"headerName": "Cliente", "width": 260, "minWidth": 230, "pinned": "left", "cellStyle": _cell_style("left", bold=True, color="#1f5c8f")},
+        "Data": {"headerName": "Data", "width": 125, "minWidth": 118, "cellStyle": _cell_style("center")},
+        "Giorno": {"headerName": "Giorno", "width": 125, "minWidth": 115, "cellStyle": _cell_style("center")},
+        "Ora": {"headerName": "Ora", "width": 90, "minWidth": 85, "cellStyle": _cell_style("center")},
+        "Telefono": {"headerName": "Telefono", "width": 155, "minWidth": 140, "cellStyle": _cell_style("left")},
+        "Email": {"headerName": "Email", "width": 320, "minWidth": 280, "cellStyle": _cell_style("left", editable=True)},
+        "Istruttrice": {"headerName": "Istruttrice", "width": 130, "minWidth": 120, "cellStyle": _cell_style("center")},
+        "Stato": {"headerName": "Stato", "width": 145, "minWidth": 130, "cellStyle": _cell_style("center")},
+        "Importo": {"headerName": "Importo", "width": 115, "minWidth": 105, "cellStyle": _cell_style("right", editable=True)},
+        "Pagato": {"headerName": "Pagato", "width": 105, "minWidth": 95, "cellStyle": _cell_style("center", editable=True)},
+        "Note cliente": {"headerName": "Note cliente", "width": 360, "minWidth": 300, "wrapText": True, "autoHeight": True, "cellStyle": _cell_style("left", editable=True)},
+        "Note prenotazione": {"headerName": "Note prenotazione", "width": 360, "minWidth": 300, "wrapText": True, "autoHeight": True, "cellStyle": _cell_style("left", editable=True)},
+        "Inserita il": {"headerName": "Inserita il", "width": 190, "minWidth": 170, "cellStyle": _cell_style("center")},
+    }
+
+    for col_def in grid_options.get("columnDefs", []):
+        field = col_def.get("field")
+        if field in col_map:
+            col_def.update(col_map[field])
+    return grid_options
+
+
+def _apply_client_grid_options(grid_options):
+    if not isinstance(grid_options, dict):
+        return grid_options
+    grid_options.setdefault("defaultColDef", {})
+    grid_options["defaultColDef"].update({
+        "sortable": True,
+        "filter": True,
+        "resizable": True,
+        "wrapHeaderText": False,
+        "autoHeaderHeight": False,
+        "cellStyle": _cell_style("center"),
+    })
+    grid_options.update({"rowHeight": 44, "headerHeight": 52, "suppressHorizontalScroll": False, "alwaysShowHorizontalScroll": True})
+    col_map = {
+        "Cognome": {"width": 280, "minWidth": 240, "cellStyle": _cell_style("left", bold=True, color="#243142")},
+        "Nome": {"width": 280, "minWidth": 240, "cellStyle": _cell_style("left")},
+        "Ultima lezione": {"width": 170, "minWidth": 155, "cellStyle": _cell_style("center")},
+    }
+    for col_def in grid_options.get("columnDefs", []):
+        field = col_def.get("field")
+        if field in col_map:
+            col_def.update(col_map[field])
+    return grid_options
+
+
 def apply_ui_patches():
     global _PATCHED
     if _PATCHED:
@@ -38,86 +181,32 @@ def apply_ui_patches():
         original_markdown(
             """
             <style>
-            .block-container {
-                padding-top: 1.0rem !important;
-                padding-bottom: 2rem !important;
-                max-width: 1240px !important;
-            }
+            .block-container { padding-top: 1.0rem !important; padding-bottom: 2rem !important; max-width: 1240px !important; }
             .stApp { background: #f9fbf9 !important; }
             .bodycenter-hero {
-                display: flex;
-                align-items: center;
-                gap: 28px;
-                width: 100%;
-                box-sizing: border-box;
+                display: flex; align-items: center; gap: 28px; width: 100%; box-sizing: border-box;
                 background: linear-gradient(135deg, #f8fbf8 0%, #eef6f1 100%);
-                border: 1px solid #dfe8df;
-                border-radius: 26px;
-                padding: 22px 28px;
-                margin: 4px 0 18px 0;
+                border: 1px solid #dfe8df; border-radius: 26px; padding: 22px 28px; margin: 4px 0 18px 0;
                 box-shadow: 0 10px 30px rgba(36,49,66,0.07);
             }
-            .bodycenter-hero-logo {
-                width: 128px;
-                height: 128px;
-                object-fit: contain;
-                filter: drop-shadow(0 6px 10px rgba(36,49,66,0.10));
-                flex: 0 0 auto;
-            }
-            .bodycenter-hero-title {
-                margin: 0;
-                color: #243142;
-                font-size: clamp(2.25rem, 4vw, 3.15rem);
-                font-weight: 850;
-                line-height: 1.02;
-                letter-spacing: -0.035em;
-            }
-            .bodycenter-hero-subtitle {
-                margin: 8px 0 0 0;
-                color: #6f7780;
-                font-size: 1.06rem;
-            }
+            .bodycenter-hero-logo { width: 128px; height: 128px; object-fit: contain; filter: drop-shadow(0 6px 10px rgba(36,49,66,0.10)); flex: 0 0 auto; }
+            .bodycenter-hero-title { margin: 0; color: #243142; font-size: clamp(2.25rem, 4vw, 3.15rem); font-weight: 850; line-height: 1.02; letter-spacing: -0.035em; }
+            .bodycenter-hero-subtitle { margin: 8px 0 0 0; color: #6f7780; font-size: 1.06rem; }
             div[data-testid="stRadio"] { margin-top: 0.1rem !important; margin-bottom: 0.55rem !important; }
             div[data-testid="stRadio"] > div { gap: 0.65rem !important; flex-wrap: wrap !important; }
             div[data-testid="stRadio"] label {
-                min-height: 44px !important;
-                padding: 0.58rem 1.02rem !important;
-                border-radius: 999px !important;
-                border: 1px solid #dce6dc !important;
-                background: #ffffff !important;
-                box-shadow: 0 3px 10px rgba(36,49,66,0.045) !important;
-                transition: all 0.16s ease !important;
-                display: inline-flex !important;
-                align-items: center !important;
+                min-height: 44px !important; padding: 0.58rem 1.02rem !important; border-radius: 999px !important;
+                border: 1px solid #dce6dc !important; background: #ffffff !important;
+                box-shadow: 0 3px 10px rgba(36,49,66,0.045) !important; transition: all 0.16s ease !important;
+                display: inline-flex !important; align-items: center !important;
             }
-            div[data-testid="stRadio"] label:hover {
-                transform: translateY(-1px) !important;
-                border-color: #496744 !important;
-                background: #f2f8f3 !important;
-                box-shadow: 0 6px 16px rgba(36,49,66,0.08) !important;
-            }
-            div[data-testid="stRadio"] label p {
-                color: #243142 !important;
-                font-size: 0.98rem !important;
-                font-weight: 650 !important;
-                margin: 0 !important;
-            }
+            div[data-testid="stRadio"] label:hover { transform: translateY(-1px) !important; border-color: #496744 !important; background: #f2f8f3 !important; box-shadow: 0 6px 16px rgba(36,49,66,0.08) !important; }
+            div[data-testid="stRadio"] label p { color: #243142 !important; font-size: 0.98rem !important; font-weight: 650 !important; margin: 0 !important; }
             div[data-testid="stRadio"] input[type="radio"] { display: none !important; }
-            div[data-testid="stRadio"] label:has(input:checked) {
-                background: #496744 !important;
-                border-color: #496744 !important;
-                box-shadow: 0 7px 18px rgba(73,103,68,0.22) !important;
-            }
+            div[data-testid="stRadio"] label:has(input:checked) { background: #496744 !important; border-color: #496744 !important; box-shadow: 0 7px 18px rgba(73,103,68,0.22) !important; }
             div[data-testid="stRadio"] label:has(input:checked) p { color: #ffffff !important; }
-            hr {
-                margin-top: 0.85rem !important;
-                margin-bottom: 1.35rem !important;
-                border-top: 1px solid #e2eae2 !important;
-            }
-            @media (max-width: 760px) {
-                .bodycenter-hero { flex-direction: column; align-items: flex-start; gap: 16px; padding: 18px; }
-                .bodycenter-hero-logo { width: 96px; height: 96px; }
-            }
+            hr { margin-top: 0.85rem !important; margin-bottom: 1.35rem !important; border-top: 1px solid #e2eae2 !important; }
+            @media (max-width: 760px) { .bodycenter-hero { flex-direction: column; align-items: flex-start; gap: 16px; padding: 18px; } .bodycenter-hero-logo { width: 96px; height: 96px; } }
             </style>
             """,
             unsafe_allow_html=True,
@@ -170,3 +259,25 @@ def apply_ui_patches():
     st.markdown = markdown_patched
     st.caption = caption_patched
     st.radio = radio_patched
+
+    try:
+        import st_aggrid as _st_aggrid
+        original_aggrid = _st_aggrid.AgGrid
+
+        def aggrid_patched(data, *args, **kwargs):
+            key = str(kwargs.get("key", ""))
+            if key.startswith("archive_grid"):
+                kwargs["gridOptions"] = _apply_archive_grid_options(kwargs.get("gridOptions", {}))
+                kwargs["custom_css"] = _grid_css(kwargs.get("custom_css"))
+                kwargs["height"] = max(int(kwargs.get("height", 0) or 0), 720)
+                kwargs["fit_columns_on_grid_load"] = False
+            elif key.startswith("client_grid"):
+                kwargs["gridOptions"] = _apply_client_grid_options(kwargs.get("gridOptions", {}))
+                kwargs["custom_css"] = _grid_css(kwargs.get("custom_css"))
+                kwargs["height"] = max(int(kwargs.get("height", 0) or 0), 500)
+                kwargs["fit_columns_on_grid_load"] = False
+            return original_aggrid(data, *args, **kwargs)
+
+        _st_aggrid.AgGrid = aggrid_patched
+    except Exception:
+        pass
