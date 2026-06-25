@@ -23,7 +23,6 @@ DAY_NAMES={0:"Lunedì",1:"Martedì",2:"Mercoledì",3:"Giovedì",4:"Venerdì",5:"
 def get_secret(n,d=""):
     try: return str(st.secrets.get(n,d))
     except Exception: return os.environ.get(n,d)
-
 def github_enabled(): return bool(get_secret("GITHUB_TOKEN") and get_secret("GITHUB_REPO") and get_secret("GITHUB_BRANCH","main"))
 def github_headers(): return {"Authorization":f"Bearer {get_secret('GITHUB_TOKEN')}","Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"}
 def github_file_url(): return f"https://api.github.com/repos/{get_secret('GITHUB_REPO')}/contents/{LOCAL_DATA_PATH}"
@@ -49,7 +48,8 @@ def load_data():
 
 def parse_date(d):
     if isinstance(d,date): return d
-    s=str(d).strip()
+    s=str(d or "").strip()
+    if not s: raise ValueError("data vuota")
     for f in ("%Y-%m-%d","%d/%m/%Y","%d-%m-%Y"):
         try: return datetime.strptime(s,f).date()
         except ValueError: pass
@@ -57,7 +57,7 @@ def parse_date(d):
 def date_key(d): return d.isoformat()
 def date_it(d):
     try: return parse_date(d).strftime("%d-%m-%Y")
-    except Exception: return str(d or "")
+    except Exception: return ""
 def money(v):
     try: return round(float(v or 0),2)
     except Exception: return 0.0
@@ -70,32 +70,65 @@ def split_name(n):
     if not parts: return "",""
     if len(parts)==1: return parts[0],""
     return " ".join(parts[1:]),parts[0]
+def age_from_birth(birth):
+    if not birth: return ""
+    try:
+        b=parse_date(birth); today=date.today()
+        return today.year-b.year-((today.month,today.day)<(b.month,b.day))
+    except Exception: return ""
+
+def last_visit(data,cid):
+    dates=[]
+    for b in data.get("bookings",[]):
+        if b.get("client_id")==cid and b.get("status")!="Annullata":
+            try: dates.append(parse_date(b.get("date")))
+            except Exception: pass
+    return max(dates) if dates else None
 
 def ensure_data(data):
     data.setdefault("bookings",[]); data.setdefault("clients",[])
     keys={ckey(c.get("first_name",""),c.get("last_name","")):c for c in data["clients"]}
+    for c in data["clients"]:
+        c.setdefault("phone",""); c.setdefault("email",""); c.setdefault("notes",""); c.setdefault("birth_date",""); c.setdefault("anamnesis",""); c.setdefault("goals","")
     for b in data["bookings"]:
         b.setdefault("amount",0); b.setdefault("paid",False); b.setdefault("note",""); b.setdefault("instructor","")
         if b.get("client_id"): continue
         first,last=split_name(b.get("name","")); k=ckey(first,last)
         if k.strip("|") and k in keys: b["client_id"]=keys[k]["id"]
         elif k.strip("|"):
-            c={"id":new_id("c_"),"first_name":first,"last_name":last,"phone":b.get("phone",""),"email":b.get("email",""),"notes":"","created_at":datetime.now().isoformat(timespec="seconds")}
+            c={"id":new_id("c_"),"first_name":first,"last_name":last,"phone":b.get("phone",""),"email":b.get("email",""),"notes":"","birth_date":"","anamnesis":"","goals":"","created_at":datetime.now().isoformat(timespec="seconds")}
             data["clients"].append(c); keys[k]=c; b["client_id"]=c["id"]
     return data
 
-def get_client(data,cid):
-    return next((c for c in data.get("clients",[]) if c.get("id")==cid),None)
+def get_client(data,cid): return next((c for c in data.get("clients",[]) if c.get("id")==cid),None)
 def client_options(data): return sorted([f"{full_name(c)} | {c.get('phone','')} | {c.get('email','')} | {c.get('id')}" for c in data.get("clients",[])],key=str.lower)
 def opt_id(o): return o.split("|")[-1].strip()
-def add_client(data,first,last,phone="",email="",notes=""):
+def add_client(data,first,last,phone="",email="",notes="",birth_date="",anamnesis="",goals=""):
     first,last=first.strip(),last.strip()
     if not first or not last: return False,"Inserisci nome e cognome.",None
     k=ckey(first,last)
     for c in data.get("clients",[]):
         if ckey(c.get("first_name",""),c.get("last_name",""))==k: return False,"Cliente già presente: nome e cognome devono essere univoci.",c.get("id")
-    cid=new_id("c_"); data["clients"].append({"id":cid,"first_name":first,"last_name":last,"phone":phone.strip(),"email":email.strip(),"notes":notes.strip(),"created_at":datetime.now().isoformat(timespec="seconds")})
+    cid=new_id("c_")
+    data["clients"].append({"id":cid,"first_name":first,"last_name":last,"phone":phone.strip(),"email":email.strip(),"notes":notes.strip(),"birth_date":birth_date,"anamnesis":anamnesis.strip(),"goals":goals.strip(),"created_at":datetime.now().isoformat(timespec="seconds")})
     return True,"Cliente salvato.",cid
+
+def update_client_record(data,cid,first,last,phone,email,birth,notes,anamnesis,goals):
+    c=get_client(data,cid)
+    if not c: return False,"Cliente non trovato."
+    first,last=first.strip(),last.strip()
+    if not first or not last: return False,"Nome e cognome sono obbligatori."
+    k=ckey(first,last)
+    for other in data.get("clients",[]):
+        if other.get("id")!=cid and ckey(other.get("first_name",""),other.get("last_name",""))==k:
+            return False,"Esiste già un altro cliente con lo stesso nome e cognome."
+    old_name=full_name(c)
+    c.update({"first_name":first,"last_name":last,"phone":phone.strip(),"email":email.strip(),"birth_date":birth,"notes":notes.strip(),"anamnesis":anamnesis.strip(),"goals":goals.strip()})
+    new_name=full_name(c)
+    for b in data.get("bookings",[]):
+        if b.get("client_id")==cid:
+            b["name"]=new_name; b["phone"]=c.get("phone",""); b["email"]=c.get("email","")
+    return True,"Scheda cliente aggiornata."
 
 def times_for(d): return SCHEDULE.get(d.weekday(),[])
 def next_days(start,n=5):
@@ -104,8 +137,7 @@ def next_days(start,n=5):
         if d.weekday() in SCHEDULE: out.append(d)
         d+=timedelta(days=1)
     return out
-def slot_rows(data,d,t,include_cancelled=False):
-    return sorted([b for b in data.get("bookings",[]) if b.get("date")==date_key(d) and b.get("time")==t and (include_cancelled or b.get("status")!="Annullata")],key=lambda x:x.get("created_at",""))
+def slot_rows(data,d,t,include_cancelled=False): return sorted([b for b in data.get("bookings",[]) if b.get("date")==date_key(d) and b.get("time")==t and (include_cancelled or b.get("status")!="Annullata")],key=lambda x:x.get("created_at",""))
 def confirmed_count(data,d,t,exclude_id=None): return sum(1 for b in slot_rows(data,d,t) if b.get("status")=="Confermata" and b.get("id")!=exclude_id)
 def auto_status(data,d,t): return "Confermata" if confirmed_count(data,d,t)<CAPACITY else "Lista attesa"
 def status_icon(status): return {"Confermata":"✅","Lista attesa":"⏳","Annullata":"❌"}.get(status,"")
@@ -138,13 +170,16 @@ def archive_df(data):
     if not rows: return pd.DataFrame(columns=cols)
     df=pd.DataFrame(rows); df["_s"]=pd.to_datetime(df["Data"],dayfirst=True,errors="coerce"); return df.sort_values(["_s","Ora","Cliente"]).drop(columns=["_s"])
 
-def clients_df(data):
+def clients_df(data,sort_by="Alfabetico"):
     rows=[]
     for c in data.get("clients",[]):
-        n=sum(1 for b in data.get("bookings",[]) if b.get("client_id")==c.get("id"))
-        rows.append({"ID":c.get("id"),"Cognome":c.get("last_name",""),"Nome":c.get("first_name",""),"Telefono":c.get("phone",""),"Email":c.get("email",""),"Note cliente":c.get("notes",""),"Prenotazioni":n})
-    cols=["ID","Cognome","Nome","Telefono","Email","Note cliente","Prenotazioni"]
-    return pd.DataFrame(rows).sort_values(["Cognome","Nome"]) if rows else pd.DataFrame(columns=cols)
+        lv=last_visit(data,c.get("id")); n=sum(1 for b in data.get("bookings",[]) if b.get("client_id")==c.get("id"))
+        rows.append({"ID":c.get("id"),"Cognome":c.get("last_name",""),"Nome":c.get("first_name",""),"Ultima lezione":date_it(lv) if lv else "","_last":lv or date(1900,1,1),"Prenotazioni":n})
+    cols=["ID","Cognome","Nome","Ultima lezione","_last","Prenotazioni"]
+    if not rows: return pd.DataFrame(columns=cols)
+    df=pd.DataFrame(rows)
+    if sort_by=="Ultima visita": return df.sort_values(["_last","Cognome","Nome"],ascending=[False,True,True])
+    return df.sort_values(["Cognome","Nome"])
 
 def period_range(opt):
     today=date.today()
@@ -171,8 +206,7 @@ def make_excel(df):
     with pd.ExcelWriter(bio,engine="openpyxl") as w:
         df.to_excel(w,index=False,sheet_name="Archivio")
         ws=w.sheets["Archivio"]
-        for col in ws.columns:
-            ws.column_dimensions[col[0].column_letter].width=min(max(max(len(str(c.value)) if c.value is not None else 0 for c in col)+2,10),38)
+        for col in ws.columns: ws.column_dimensions[col[0].column_letter].width=min(max(max(len(str(c.value)) if c.value is not None else 0 for c in col)+2,10),38)
     bio.seek(0); return bio.getvalue()
 def make_pdf(df,label=""):
     bio=BytesIO(); doc=SimpleDocTemplate(bio,pagesize=landscape(A4),rightMargin=.8*cm,leftMargin=.8*cm,topMargin=.8*cm,bottomMargin=.8*cm); styles=getSampleStyleSheet(); tot,paid,unpaid,per=summary(df); elems=[]
@@ -193,15 +227,6 @@ def update_archive(data,ed):
         for k,v in vals.items():
             if b.get(k)!=v: b[k]=v; ch=True
         if ch: n+=1
-    return n
-def update_clients(data,ed):
-    n=0; by={c.get("id"):c for c in data.get("clients",[])}
-    for _,r in ed.iterrows():
-        c=by.get(r.get("ID"));
-        if not c: continue
-        for k,col in [("phone","Telefono"),("email","Email"),("notes","Note cliente")]:
-            v=str(r.get(col,"") or "")
-            if c.get(k,"")!=v: c[k]=v; n+=1
     return n
 
 def login():
@@ -247,9 +272,9 @@ with tab2:
         if opts: cid=opt_id(st.selectbox("Cliente",opts)); c=get_client(data,cid); st.caption(f"Telefono: {c.get('phone','')} · Email: {c.get('email','')}")
         else: st.warning("Nessun cliente in archivio.")
     else:
-        a,b=st.columns(2); last=a.text_input("Cognome"); first=b.text_input("Nome"); c,d=st.columns(2); phone=c.text_input("Telefono"); email=d.text_input("Email"); notes=st.text_area("Note cliente")
+        a,b=st.columns(2); last=a.text_input("Cognome"); first=b.text_input("Nome"); c,d=st.columns(2); phone=c.text_input("Telefono"); email=d.text_input("Email"); birth=st.text_input("Data di nascita",placeholder="gg-mm-aaaa"); notes=st.text_area("Note cliente")
         if st.button("Salva nuovo cliente"): 
-            ok,msg,cid=add_client(data,first,last,phone,email,notes); (st.success if ok else st.error)(msg)
+            ok,msg,cid=add_client(data,first,last,phone,email,notes,birth); (st.success if ok else st.error)(msg)
             if ok: save_data(data,sha,"Add client"); st.rerun()
     if cid:
         st.markdown("### Dati prenotazione"); a,b=st.columns(2); d=parse_date(a.date_input("Data",value=date.today(),min_value=date.today(),format="DD/MM/YYYY",key="bd")); ts=times_for(d)
@@ -260,18 +285,36 @@ with tab2:
 with tab3:
     st.subheader("Archivio clienti")
     with st.expander("➕ Inserisci nuovo cliente"):
-        a,b=st.columns(2); last=a.text_input("Cognome",key="cl"); first=b.text_input("Nome",key="cf"); c,d=st.columns(2); phone=c.text_input("Telefono",key="cp"); email=d.text_input("Email",key="ce"); notes=st.text_area("Note cliente",key="cn")
+        a,b=st.columns(2); last=a.text_input("Cognome",key="cl"); first=b.text_input("Nome",key="cf"); c,d=st.columns(2); phone=c.text_input("Telefono",key="cp"); email=d.text_input("Email",key="ce"); birth=st.text_input("Data di nascita",placeholder="gg-mm-aaaa",key="cb"); notes=st.text_area("Note cliente",key="cn")
         if st.button("Salva cliente"):
-            ok,msg,_=add_client(data,first,last,phone,email,notes); (st.success if ok else st.error)(msg)
+            ok,msg,_=add_client(data,first,last,phone,email,notes,birth); (st.success if ok else st.error)(msg)
             if ok: save_data(data,sha,"Add client"); st.rerun()
-    dfc=clients_df(data)
+    sort_by=st.radio("Ordina per",["Alfabetico","Ultima visita"],horizontal=True)
+    dfc=clients_df(data,sort_by)
     if dfc.empty: st.info("Nessun cliente presente.")
     else:
         q=st.text_input("Cerca cliente").lower().strip(); view=dfc[dfc.apply(lambda r:q in " ".join(map(str,r.values)).lower(),axis=1)] if q else dfc
-        ed=st.data_editor(view,use_container_width=True,hide_index=True,column_config={"ID":None},disabled=["Cognome","Nome","Prenotazioni"],key="ced")
-        if st.button("Salva modifiche clienti"):
-            n=update_clients(data,ed); st.success(f"Aggiornati {n} campi cliente.") if n else st.info("Nessuna modifica da salvare.")
-            if n: save_data(data,sha,"Update clients"); st.rerun()
+        st.dataframe(view[["Cognome","Nome","Ultima lezione"]],use_container_width=True,hide_index=True)
+        opts=[f"{r.Cognome} {r.Nome} | ultima lezione: {r._asdict().get('Ultima lezione','')} | {r.ID}" for r in view.itertuples(index=False)]
+        selected=st.selectbox("Apri scheda cliente",opts) if opts else None
+        if selected:
+            cid=selected.split("|")[-1].strip(); c=get_client(data,cid)
+            if c:
+                st.markdown(f"### Scheda anagrafica: {full_name(c)}")
+                a,b=st.columns(2); last=a.text_input("Cognome",value=c.get("last_name",""),key=f"sl{cid}"); first=b.text_input("Nome",value=c.get("first_name",""),key=f"sf{cid}")
+                a,b,c3=st.columns(3); phone=a.text_input("Telefono",value=c.get("phone",""),key=f"sp{cid}"); email=b.text_input("Email",value=c.get("email",""),key=f"se{cid}"); birth=c3.text_input("Data di nascita",value=date_it(c.get("birth_date","")),placeholder="gg-mm-aaaa",key=f"sb{cid}")
+                st.caption(f"Età: {age_from_birth(birth) if birth else ''}")
+                notes=st.text_area("Note cliente",value=c.get("notes",""),key=f"sn{cid}")
+                anam=st.text_area("Anamnesi / problematiche",value=c.get("anamnesis",""),height=140,key=f"sa{cid}")
+                goals=st.text_area("Obiettivi",value=c.get("goals",""),height=100,key=f"sg{cid}")
+                if st.button("Salva scheda cliente",type="primary"):
+                    ok,msg=update_client_record(data,cid,first,last,phone,email,birth,notes,anam,goals); (st.success if ok else st.error)(msg)
+                    if ok: save_data(data,sha,"Update client record"); st.rerun()
+                client_bks=[b for b in data.get("bookings",[]) if b.get("client_id")==cid]
+                if client_bks:
+                    st.markdown("#### Storico lezioni")
+                    hist=pd.DataFrame([{"Data":date_it(b.get("date")),"Ora":b.get("time"),"Istruttrice":b.get("instructor"),"Stato":b.get("status"),"Importo":money(b.get("amount",0)),"Pagato":bool(b.get("paid",False)),"Note":b.get("note","")} for b in client_bks]).sort_values(["Data","Ora"])
+                    st.dataframe(hist,use_container_width=True,hide_index=True)
 with tab4:
     st.subheader("Cerca")
     q=st.text_input("Cerca per nome, telefono o email").lower().strip(); dfa=archive_df(data)
