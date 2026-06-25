@@ -414,6 +414,18 @@
       "anamnesis": "",
       "goals": "",
       "created_at": "2026-06-25T13:56:32"
+    },
+    {
+      "id": "c_20260625174834510443",
+      "first_name": "Anna",
+      "last_name": "Cavallo",
+      "phone": "+39 345 721 1028",
+      "email": "",
+      "notes": "",
+      "birth_date": "",
+      "anamnesis": "",
+      "goals": "",
+      "created_at": "2026-06-25T17:48:34"
     }
   ]
 }
