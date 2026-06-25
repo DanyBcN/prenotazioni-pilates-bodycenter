@@ -1,10 +1,12 @@
 import base64
+import html
 import json
 import os
 import re
 from datetime import date, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import quote
 
 import pandas as pd
 import requests
@@ -22,7 +24,6 @@ LOGO_PATH = "assets/logo.png"
 INSTRUCTORS = ["Grazia", "Alice"]
 GREEN = "#496744"
 DARK = "#243142"
-
 SCHEDULE = {
     0: ["08:30", "09:30", "10:30", "17:00", "18:00", "19:00"],
     1: ["09:30", "10:30", "11:30", "12:45", "14:30", "19:00"],
@@ -45,11 +46,7 @@ def github_enabled():
 
 
 def github_headers():
-    return {
-        "Authorization": f"Bearer {get_secret('GITHUB_TOKEN')}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
+    return {"Authorization": f"Bearer {get_secret('GITHUB_TOKEN')}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
 
 
 def github_file_url():
@@ -58,11 +55,7 @@ def github_file_url():
 
 def save_data(data, sha=None, message="Update data"):
     if github_enabled():
-        body = {
-            "message": message,
-            "content": base64.b64encode(json.dumps(data, ensure_ascii=False, indent=2).encode()).decode(),
-            "branch": get_secret("GITHUB_BRANCH", "main"),
-        }
+        body = {"message": message, "content": base64.b64encode(json.dumps(data, ensure_ascii=False, indent=2).encode()).decode(), "branch": get_secret("GITHUB_BRANCH", "main")}
         if sha:
             body["sha"] = sha
         r = requests.put(github_file_url(), headers=github_headers(), json=body, timeout=20)
@@ -182,18 +175,7 @@ def ensure_data(data):
         if k.strip("|") and k in keys:
             b["client_id"] = keys[k]["id"]
         elif k.strip("|"):
-            c = {
-                "id": new_id("c_"),
-                "first_name": first,
-                "last_name": last,
-                "phone": b.get("phone", ""),
-                "email": b.get("email", ""),
-                "notes": "",
-                "birth_date": "",
-                "anamnesis": "",
-                "goals": "",
-                "created_at": datetime.now().isoformat(timespec="seconds"),
-            }
+            c = {"id": new_id("c_"), "first_name": first, "last_name": last, "phone": b.get("phone", ""), "email": b.get("email", ""), "notes": "", "birth_date": "", "anamnesis": "", "goals": "", "created_at": datetime.now().isoformat(timespec="seconds")}
             data["clients"].append(c)
             keys[k] = c
             b["client_id"] = c["id"]
@@ -221,18 +203,7 @@ def add_client(data, first, last, phone="", email="", notes="", birth_date="", a
         if client_key(c.get("first_name", ""), c.get("last_name", "")) == k:
             return False, "Cliente già presente: nome e cognome devono essere univoci.", c.get("id")
     cid = new_id("c_")
-    data["clients"].append({
-        "id": cid,
-        "first_name": first,
-        "last_name": last,
-        "phone": phone.strip(),
-        "email": email.strip(),
-        "notes": notes.strip(),
-        "birth_date": birth_date.strip(),
-        "anamnesis": anamnesis.strip(),
-        "goals": goals.strip(),
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-    })
+    data["clients"].append({"id": cid, "first_name": first, "last_name": last, "phone": phone.strip(), "email": email.strip(), "notes": notes.strip(), "birth_date": birth_date.strip(), "anamnesis": anamnesis.strip(), "goals": goals.strip(), "created_at": datetime.now().isoformat(timespec="seconds")})
     return True, "Cliente salvato.", cid
 
 
@@ -247,16 +218,7 @@ def update_client_record(data, cid, first, last, phone, email, birth, notes, ana
     for other in data.get("clients", []):
         if other.get("id") != cid and client_key(other.get("first_name", ""), other.get("last_name", "")) == k:
             return False, "Esiste già un altro cliente con lo stesso nome e cognome."
-    c.update({
-        "first_name": first,
-        "last_name": last,
-        "phone": phone.strip(),
-        "email": email.strip(),
-        "birth_date": birth.strip(),
-        "notes": notes.strip(),
-        "anamnesis": anamnesis.strip(),
-        "goals": goals.strip(),
-    })
+    c.update({"first_name": first, "last_name": last, "phone": phone.strip(), "email": email.strip(), "birth_date": birth.strip(), "notes": notes.strip(), "anamnesis": anamnesis.strip(), "goals": goals.strip()})
     for b in data.get("bookings", []):
         if b.get("client_id") == cid:
             b["name"] = full_name(c)
@@ -316,23 +278,7 @@ def create_booking(data, cid, d, t, amount, paid, instructor, note):
     c = get_client(data, cid)
     if not c:
         raise ValueError("Cliente non trovato.")
-    b = {
-        "id": new_id("b_"),
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-        "client_id": cid,
-        "date": date_key(d),
-        "day": DAY_NAMES[d.weekday()],
-        "time": t,
-        "name": full_name(c),
-        "phone": c.get("phone", ""),
-        "email": c.get("email", ""),
-        "note": note.strip(),
-        "status": auto_status(data, d, t),
-        "amount": money(amount),
-        "paid": bool(paid),
-        "instructor": instructor,
-        "created_by": "staff",
-    }
+    b = {"id": new_id("b_"), "created_at": datetime.now().isoformat(timespec="seconds"), "client_id": cid, "date": date_key(d), "day": DAY_NAMES[d.weekday()], "time": t, "name": full_name(c), "phone": c.get("phone", ""), "email": c.get("email", ""), "note": note.strip(), "status": auto_status(data, d, t), "amount": money(amount), "paid": bool(paid), "instructor": instructor, "created_by": "staff"}
     data["bookings"].append(b)
     return b
 
@@ -360,16 +306,9 @@ def clients_df(data, sort_by="Alfabetico"):
     rows = []
     for c in data.get("clients", []):
         lv = last_visit(data, c.get("id"))
-        rows.append({
-            "ID": c.get("id"),
-            "Cognome": c.get("last_name", ""),
-            "Nome": c.get("first_name", ""),
-            "Cliente": full_name(c),
-            "Ultima lezione": date_it(lv) if lv else "",
-            "_last": lv or date(1900, 1, 1),
-        })
+        rows.append({"ID": c.get("id"), "Cognome": c.get("last_name", ""), "Nome": c.get("first_name", ""), "Ultima lezione": date_it(lv) if lv else "", "_last": lv or date(1900, 1, 1)})
     if not rows:
-        return pd.DataFrame(columns=["ID", "Cognome", "Nome", "Cliente", "Ultima lezione", "_last"])
+        return pd.DataFrame(columns=["ID", "Cognome", "Nome", "Ultima lezione", "_last"])
     df = pd.DataFrame(rows)
     if sort_by == "Ultima visita":
         return df.sort_values(["_last", "Cognome", "Nome"], ascending=[False, True, True]).reset_index(drop=True)
@@ -380,23 +319,7 @@ def archive_df(data):
     rows = []
     for b in data.get("bookings", []):
         c = get_client(data, b.get("client_id"))
-        rows.append({
-            "Eliminazione": False,
-            "ID": b.get("id"),
-            "Client ID": b.get("client_id"),
-            "Data": date_it(b.get("date")),
-            "Giorno": b.get("day"),
-            "Ora": b.get("time"),
-            "Cliente": full_name(c) if c else b.get("name", ""),
-            "Telefono": (c or {}).get("phone", b.get("phone", "")),
-            "Email": (c or {}).get("email", b.get("email", "")),
-            "Istruttrice": b.get("instructor", ""),
-            "Stato": b.get("status"),
-            "Importo": money(b.get("amount", 0)),
-            "Pagato": bool(b.get("paid", False)),
-            "Note": b.get("note", ""),
-            "Inserita il": b.get("created_at"),
-        })
+        rows.append({"Eliminazione": False, "ID": b.get("id"), "Client ID": b.get("client_id"), "Data": date_it(b.get("date")), "Giorno": b.get("day"), "Ora": b.get("time"), "Cliente": full_name(c) if c else b.get("name", ""), "Telefono": (c or {}).get("phone", b.get("phone", "")), "Email": (c or {}).get("email", b.get("email", "")), "Istruttrice": b.get("instructor", ""), "Stato": b.get("status"), "Importo": money(b.get("amount", 0)), "Pagato": bool(b.get("paid", False)), "Note": b.get("note", ""), "Inserita il": b.get("created_at")})
     if not rows:
         return pd.DataFrame(columns=["Eliminazione", "ID", "Client ID", "Data", "Giorno", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Importo", "Pagato", "Note", "Inserita il"])
     df = pd.DataFrame(rows)
@@ -509,36 +432,50 @@ def login():
     return False
 
 
-def row_css():
+def clickable_css():
     st.markdown(f"""
     <style>
-    div.stButton > button[kind="secondary"] {{
-        width: 100%;
-        text-align: left;
-        justify-content: flex-start;
-        border: 1px solid #e2e8e0;
-        background: #ffffff;
-        border-radius: 10px;
-        padding: 0.75rem 0.9rem;
-        cursor: pointer !important;
-        transition: background 0.12s ease, transform 0.08s ease, border-color 0.12s ease;
-    }}
-    div.stButton > button[kind="secondary"]:hover {{
-        background: #eef6f2;
-        border-color: {GREEN};
-        color: #111111;
-        cursor: pointer !important;
-        transform: translateY(-1px);
-    }}
-    div.stButton > button[kind="secondary"] * {{ cursor: pointer !important; }}
+    .click-table {{ width:100%; border-collapse:collapse; font-size:15px; margin-top:8px; }}
+    .click-table th {{ text-align:left; background:#f4f6f8; padding:10px; border:1px solid #e1e4e8; font-weight:700; }}
+    .click-table td {{ padding:10px; border:1px solid #e1e4e8; vertical-align:middle; }}
+    .click-table tr:hover td {{ background:#eef6f2; cursor:pointer; }}
+    .click-table a {{ color:#1f5c8f; text-decoration:none; font-weight:700; display:block; cursor:pointer; }}
+    .click-table a:hover {{ color:{GREEN}; text-decoration:underline; cursor:pointer; }}
     </style>
     """, unsafe_allow_html=True)
 
 
-def open_client_button(cid, label, key):
-    if st.button(label, key=key, use_container_width=True):
-        st.session_state["open_client_id"] = cid
-        st.rerun()
+def client_link(cid, label):
+    return f"<a href='?client_id={quote(str(cid))}'>{html.escape(str(label))}</a>"
+
+
+def render_clients_html_table(df):
+    rows = []
+    for _, r in df.iterrows():
+        rows.append(f"<tr><td>{client_link(r['ID'], r['Cognome'])}</td><td>{html.escape(str(r['Nome']))}</td><td>{html.escape(str(r['Ultima lezione'] or ''))}</td></tr>")
+    st.markdown("<table class='click-table'><thead><tr><th>Cognome</th><th>Nome</th><th>Ultima lezione</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>", unsafe_allow_html=True)
+
+
+def render_archive_html_table(df):
+    rows = []
+    for _, r in df.iterrows():
+        name = client_link(r.get("Client ID"), r.get("Cliente")) if r.get("Client ID") else html.escape(str(r.get("Cliente", "")))
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(r.get('Data','')))}</td>"
+            f"<td>{html.escape(str(r.get('Giorno','')))}</td>"
+            f"<td>{html.escape(str(r.get('Ora','')))}</td>"
+            f"<td>{name}</td>"
+            f"<td>{html.escape(str(r.get('Telefono','')))}</td>"
+            f"<td>{html.escape(str(r.get('Email','')))}</td>"
+            f"<td>{html.escape(str(r.get('Istruttrice','')))}</td>"
+            f"<td>{html.escape(str(r.get('Stato','')))}</td>"
+            f"<td>€ {money(r.get('Importo',0)):.2f}</td>"
+            f"<td>{'Sì' if bool(r.get('Pagato')) else 'No'}</td>"
+            f"<td>{html.escape(str(r.get('Note','')))}</td>"
+            "</tr>"
+        )
+    st.markdown("<table class='click-table'><thead><tr><th>Data</th><th>Giorno</th><th>Ora</th><th>Cliente</th><th>Telefono</th><th>Email</th><th>Istruttrice</th><th>Stato</th><th>Importo</th><th>Pagato</th><th>Note</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>", unsafe_allow_html=True)
 
 
 def render_client_card(data, sha, cid, prefix="client"):
@@ -576,7 +513,7 @@ def render_client_card(data, sha, cid, prefix="client"):
 
 
 st.set_page_config(page_title=APP_TITLE, page_icon="🧘", layout="wide")
-row_css()
+clickable_css()
 
 c1, c2 = st.columns([1, 6])
 with c1:
@@ -599,6 +536,8 @@ except Exception as e:
 
 if not github_enabled():
     st.warning("Modalità locale: per condivisione usa i Secrets GitHub su Streamlit.")
+
+selected_client_id = st.query_params.get("client_id", "")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📅 Settimana", "➕ Prenota", "👤 Clienti", "🔎 Cerca", "📋 Archivio"])
 
@@ -706,7 +645,6 @@ with tab3:
                 st.rerun()
             else:
                 st.error(msg)
-
     sort_by = st.radio("Ordina per", ["Alfabetico", "Ultima visita"], horizontal=True)
     dfc = clients_df(data, sort_by)
     if dfc.empty:
@@ -714,15 +652,11 @@ with tab3:
     else:
         q = st.text_input("Cerca cliente").lower().strip()
         view = dfc[dfc.apply(lambda r: q in " ".join(map(str, r.values)).lower(), axis=1)] if q else dfc
-        view = view.reset_index(drop=True)
-        st.caption("Passa il mouse sul cliente e clicca una volta per aprire la scheda.")
-        for _, r in view.iterrows():
-            last_lesson = r["Ultima lezione"] or "nessuna lezione"
-            open_client_button(r["ID"], f"👤 {r['Cognome']} {r['Nome']}     · ultima lezione: {last_lesson}  ›", key=f"client_row_{r['ID']}")
-        cid_open = st.session_state.get("open_client_id")
-        if cid_open:
+        st.caption("Passa il mouse sul cognome e clicca una volta per aprire la scheda.")
+        render_clients_html_table(view)
+        if selected_client_id:
             st.divider()
-            render_client_card(data, sha, cid_open, prefix="clienti")
+            render_client_card(data, sha, selected_client_id, prefix="clienti")
 
 with tab4:
     st.subheader("Cerca")
@@ -759,44 +693,19 @@ with tab5:
         b.metric("Totale pagato", f"€ {paid:.2f}")
         c.metric("Totale non pagato", f"€ {unpaid:.2f}")
         st.dataframe(per, use_container_width=True, hide_index=True)
-
         status = st.multiselect("Filtra stato archivio", ["Confermata", "Lista attesa", "Annullata"], default=["Confermata", "Lista attesa"])
         only = st.checkbox("Mostra in tabella solo il periodo selezionato", value=True)
         df = dfp.copy() if only else dfa.copy()
         if status:
             df = df[df["Stato"].isin(status)]
-
-        st.markdown("#### Prenotazioni cliccabili")
-        st.caption("Passa il mouse sulla riga e clicca una volta sul cliente per aprire la scheda anagrafica.")
-        if df.empty:
-            st.info("Nessuna prenotazione nel filtro selezionato.")
-        else:
-            for idx, r in df.reset_index(drop=True).iterrows():
-                cid = r.get("Client ID")
-                if cid:
-                    label_row = f"👤 {r['Cliente']}     · {r['Data']} ore {r['Ora']} · {r['Istruttrice']} · {r['Stato']} · € {money(r['Importo']):.2f}  ›"
-                    open_client_button(cid, label_row, key=f"arch_row_{r['ID']}_{idx}")
-            cid_open = st.session_state.get("open_client_id")
-            if cid_open:
-                st.divider()
-                render_client_card(data, sha, cid_open, prefix="archivio")
-
+        st.caption("Archivio come tabella: clicca sul nome del cliente per aprire la scheda anagrafica.")
+        render_archive_html_table(df)
+        if selected_client_id:
+            st.divider()
+            render_client_card(data, sha, selected_client_id, prefix="archivio")
         st.markdown("#### Modifica importi, pagamenti e note")
         cols = ["Eliminazione", "Data", "Giorno", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Importo", "Pagato", "Note", "Inserita il", "ID"]
-        ed = st.data_editor(
-            df[cols],
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Eliminazione": st.column_config.CheckboxColumn("Eliminazione"),
-                "Pagato": st.column_config.CheckboxColumn("Pagato"),
-                "Importo": st.column_config.NumberColumn("Importo (€)", min_value=0.0, step=1.0, format="%.2f"),
-                "Note": st.column_config.TextColumn("Note"),
-                "ID": None,
-            },
-            disabled=["Data", "Giorno", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Inserita il"],
-            key="aed",
-        )
+        ed = st.data_editor(df[cols], use_container_width=True, hide_index=True, column_config={"Eliminazione": st.column_config.CheckboxColumn("Eliminazione"), "Pagato": st.column_config.CheckboxColumn("Pagato"), "Importo": st.column_config.NumberColumn("Importo (€)", min_value=0.0, step=1.0, format="%.2f"), "Note": st.column_config.TextColumn("Note"), "ID": None}, disabled=["Data", "Giorno", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Inserita il"], key="aed")
         a, b = st.columns(2)
         if a.button("Salva modifiche importi/pagamenti/note"):
             n = update_archive(data, ed)
