@@ -48,16 +48,13 @@ def _patch_app_source():
         }
         div[data-testid="stRadio"] label:has(input:checked) { background:#496744 !important; border-color:#496744 !important; }
         div[data-testid="stRadio"] label:has(input:checked) p { color:#ffffff !important; }
-        .bc-mobile-card { display:block !important; }
-        .bc-pc-only { display:none !important; }
-    }
-    @media (min-width:761px) {
-        .bc-mobile-card { display:none !important; }
-        .bc-pc-only { display:block !important; }
     }
 '''
     if "BC_MOBILE_STABLE" not in text:
         text = text.replace("    .stApp { background: #fbfcfb; }\n", "    .stApp { background: #fbfcfb; }\n" + css_extra)
+
+    # Remove older helper block before reinserting the stable one.
+    text = re.sub(r'\n\ndef bc_sync_mobile_mode\(\):\n.*?\n\ndef render_archive\(data, sha\):\n', '\n\ndef render_archive(data, sha):\n', text, flags=re.S)
 
     helpers = r'''
 
@@ -81,6 +78,8 @@ def bc_sync_mobile_mode():
 
 
 def bc_is_mobile_client():
+    if st.session_state.get("bc_force_mobile", False):
+        return True
     try:
         headers = getattr(st, "context", None).headers
         ua = str(headers.get("user-agent", headers.get("User-Agent", ""))).lower()
@@ -99,45 +98,52 @@ def bc_is_mobile_client():
     return False
 
 
-def bc_archive_mobile_cards(df):
-    rows = []
-    for _, r in df.iterrows():
-        cliente = html.escape(str(r.get("Cliente", "") or ""))
-        data = html.escape(str(r.get("Data", "") or ""))
-        ora = html.escape(str(r.get("Ora", "") or ""))
-        stato = html.escape(str(r.get("Stato", "") or ""))
-        tel_raw = str(r.get("Telefono", "") or "")
-        tel = html.escape(tel_raw)
-        email = html.escape(str(r.get("Email", "") or ""))
-        note = html.escape(str(r.get("Note cliente", "") or ""))
-        istr = html.escape(str(r.get("Istruttrice", "") or ""))
-        imp = f"€ {money(r.get('Importo', 0)):.2f}"
+def bc_archive_mobile_cards(df, data, sha):
+    st.markdown("#### Archivio telefono")
+    cid_open = st.session_state.get("open_client_id")
+    if cid_open:
+        render_client_card(data, sha, cid_open, prefix="archivio_mobile")
+        st.divider()
+
+    if df.empty:
+        st.info("Nessuna prenotazione nel filtro selezionato.")
+        return
+
+    for i, (_, r) in enumerate(df.reset_index(drop=True).iterrows()):
+        cliente = str(r.get("Cliente", "") or "")
+        data_txt = str(r.get("Data", "") or "")
+        ora = str(r.get("Ora", "") or "")
+        stato = str(r.get("Stato", "") or "")
+        telefono = str(r.get("Telefono", "") or "")
+        email = str(r.get("Email", "") or "")
+        note = str(r.get("Note cliente", "") or "")
+        istr = str(r.get("Istruttrice", "") or "")
+        cid = str(r.get("Client ID", "") or "")
+        bid = str(r.get("ID", i) or i)
+        importo = f"€ {money(r.get('Importo', 0)):.2f}"
         pagato = "Pagato" if to_bool(r.get("Pagato", False)) else "Non pagato"
-        tel_html = f"<a href='tel:{tel_raw}' style='color:#1f5c8f;text-decoration:none;font-weight:800;'>{tel}</a>" if tel_raw else ""
-        email_html = f"<div style='font-size:.88rem;color:#68727d;margin-top:4px;'>✉️ {email}</div>" if email else ""
-        note_html = f"<div style='margin-top:10px;background:#f6f8f5;border-radius:12px;padding:10px;color:#39434d;font-size:.92rem;'>📝 {note}</div>" if note else ""
-        rows.append(
-            "<div class='bc-mobile-card' style='background:#fff;border:1px solid #dde7dc;border-radius:18px;padding:14px;margin:10px 0;box-shadow:0 4px 14px rgba(36,49,66,.06);'>"
-            f"<div style='font-size:1.08rem;font-weight:900;color:#243142;margin-bottom:4px;'>{cliente}</div>"
-            f"<div style='font-size:.93rem;color:#496744;font-weight:800;margin-bottom:8px;'>📅 {data} · 🕒 {ora}</div>"
-            f"<div style='font-size:.92rem;color:#39434d;margin-bottom:4px;'>👩‍🏫 {istr} · {stato}</div>"
-            f"<div style='font-size:.94rem;color:#39434d;margin-bottom:4px;'>📞 {tel_html}</div>"
-            f"{email_html}"
-            f"<div style='margin-top:8px;font-size:.96rem;color:#243142;'>💶 <b>{imp}</b> · {pagato}</div>"
-            f"{note_html}"
-            "</div>"
-        )
-    st.markdown("".join(rows), unsafe_allow_html=True)
+
+        with st.container(border=True):
+            st.markdown(f"**{cliente}**")
+            st.caption(f"📅 {data_txt} · 🕒 {ora} · {stato}")
+            st.caption(f"👩‍🏫 {istr} · 💶 {importo} · {pagato}")
+            if telefono:
+                st.markdown(f"📞 [{telefono}](tel:{telefono})")
+            if email:
+                st.caption(f"✉️ {email}")
+            if note:
+                st.caption(f"📝 {note}")
+            if cid:
+                if st.button("Apri scheda cliente", key=f"arch_mobile_open_{bid}_{i}", use_container_width=True):
+                    st.session_state["open_client_id"] = cid
+                    st.session_state["bc_force_mobile"] = True
+                    try:
+                        st.query_params["_bc_mobile"] = "1"
+                    except Exception:
+                        pass
+                    st.rerun()
 '''
-    if "def bc_is_mobile_client" not in text:
-        text = text.replace("\n\ndef render_archive(data, sha):\n", helpers + "\n\ndef render_archive(data, sha):\n")
-    else:
-        text = re.sub(
-            r'def bc_is_mobile_client\(\):\n.*?\n\ndef bc_archive_mobile_cards',
-            helpers.split("def bc_archive_mobile_cards", 1)[0].lstrip("\n") + "\ndef bc_archive_mobile_cards",
-            text,
-            flags=re.S,
-        )
+    text = text.replace("\n\ndef render_archive(data, sha):\n", helpers + "\n\ndef render_archive(data, sha):\n")
 
     new_render_archive = r'''def render_archive(data, sha):
     st.subheader("Archivio, pagamenti e statistiche")
@@ -178,7 +184,7 @@ def bc_archive_mobile_cards(df):
         df = df[df["Stato"].isin(status)]
 
     if bc_is_mobile_client():
-        bc_archive_mobile_cards(df)
+        bc_archive_mobile_cards(df, data, sha)
         return
 
     st.dataframe(per, use_container_width=True, hide_index=True)
@@ -221,24 +227,31 @@ def bc_archive_mobile_cards(df):
     a.download_button("Scarica Excel", data=make_excel(edited), file_name="prenotazioni_pilates.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     b.download_button("Scarica PDF archivio", data=make_pdf(edited, label), file_name="archivio_prenotazioni_pilates.pdf", mime="application/pdf")
 '''
-
     text = re.sub(r'def render_archive\(data, sha\):\n.*?\n\nst\.set_page_config', new_render_archive + "\n\nst.set_page_config", text, flags=re.S)
 
-    text = text.replace(
-        '''        if ok:
-            save_data(data, sha, "Update client record")
-            st.success(msg)
-            st.rerun()
-''',
-        '''        if ok:
+    replacement_save = '''        if ok:
             save_data(data, sha, "Update client record")
             st.session_state["archive_nonce"] = int(st.session_state.get("archive_nonce", 0)) + 1
             st.session_state["client_nonce"] = int(st.session_state.get("client_nonce", 0)) + 1
+            if str(prefix).startswith("archivio"):
+                st.session_state["bc_force_mobile"] = True
+                st.session_state["section"] = "📋 Archivio"
+                try:
+                    st.query_params["_bc_mobile"] = "1"
+                except Exception:
+                    pass
             st.session_state.pop("open_client_id", None)
             st.success(msg)
             st.rerun()
 '''
+    text = re.sub(
+        r'        if ok:\n            save_data\(data, sha, "Update client record"\)\n.*?            st\.rerun\(\)\n',
+        replacement_save,
+        text,
+        count=1,
+        flags=re.S,
     )
+
     text = text.replace('    selected = client_grid(view, "client_grid")\n', '    selected = client_grid(view, f"client_grid_{st.session_state.get(\'client_nonce\', 0)}")\n')
     text = text.replace(
         '''section = st.radio("Sezione", SECTIONS, horizontal=True, key="section", label_visibility="collapsed")
