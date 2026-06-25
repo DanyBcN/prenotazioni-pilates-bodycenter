@@ -138,6 +138,42 @@ def _patch_app_source():
 '''
     )
 
+    # Force AgGrid to rebuild after editing a client from Archivio/Clienti.
+    text = text.replace(
+        '''        if ok:
+            save_data(data, sha, "Update client record")
+            st.success(msg)
+            st.rerun()
+''',
+        '''        if ok:
+            save_data(data, sha, "Update client record")
+            if str(prefix).startswith("archivio"):
+                st.session_state["archive_nonce"] = int(st.session_state.get("archive_nonce", 0)) + 1
+            if str(prefix).startswith("clienti"):
+                st.session_state["client_nonce"] = int(st.session_state.get("client_nonce", 0)) + 1
+            st.session_state.pop("open_client_id", None)
+            st.success(msg)
+            st.rerun()
+'''
+    )
+
+    text = text.replace(
+        '    selected = client_grid(view, "client_grid")\n',
+        '    selected = client_grid(view, f"client_grid_{st.session_state.get(\'client_nonce\', 0)}")\n'
+    )
+
+    text = text.replace(
+        '''section = st.radio("Sezione", SECTIONS, horizontal=True, key="section", label_visibility="collapsed")
+st.divider()
+''',
+        '''section = st.radio("Sezione", SECTIONS, horizontal=True, key="section", label_visibility="collapsed")
+if st.session_state.get("_last_section") != section:
+    st.session_state.pop("open_client_id", None)
+    st.session_state["_last_section"] = section
+st.divider()
+'''
+    )
+
     for block in [
         '''    st.markdown("#### Archivio telefono")
     archive_mobile_cards(df, data, sha)
