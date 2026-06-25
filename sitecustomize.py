@@ -1,4 +1,9 @@
 from pathlib import Path
+import re
+
+
+def _replace(text, old, new):
+    return text.replace(old, new) if old in text else text
 
 
 def _patch_app_source():
@@ -9,7 +14,9 @@ def _patch_app_source():
     text = path.read_text(encoding="utf-8")
     original = text
 
-    text = text.replace(
+    # Required client fields.
+    text = _replace(
+        text,
         '''def add_client(data, first, last, phone="", email="", notes="", birth_date="", anamnesis="", goals=""):
     first, last = first.strip(), last.strip()
     if not first or not last:
@@ -22,40 +29,16 @@ def _patch_app_source():
 '''
     )
 
-    text = text.replace(
+    # JsCode is needed for chronological sorting of the pretty date column.
+    text = _replace(
+        text,
         "from st_aggrid import AgGrid, DataReturnMode, GridOptionsBuilder, GridUpdateMode",
         "from st_aggrid import AgGrid, DataReturnMode, GridOptionsBuilder, GridUpdateMode, JsCode",
     )
 
-    text = text.replace(
-        '''    if selected:
-        st.session_state["open_client_id"] = selected.get("ID")
-    cid_open = st.session_state.get("open_client_id")
-    if cid_open:
-        st.divider()
-        render_client_card(data, sha, cid_open, prefix="clienti")
-''',
-        '''    if selected and selected.get("ID"):
-        st.divider()
-        render_client_card(data, sha, selected.get("ID"), prefix="clienti")
-'''
-    )
-
-    text = text.replace(
-        '''    if selected and selected.get("Client ID"):
-        st.session_state["open_client_id"] = selected.get("Client ID")
-    cid_open = st.session_state.get("open_client_id")
-    if cid_open:
-        st.divider()
-        render_client_card(data, sha, cid_open, prefix="archivio")
-''',
-        '''    if selected and selected.get("Client ID"):
-        st.divider()
-        render_client_card(data, sha, selected.get("Client ID"), prefix="archivio")
-'''
-    )
-
-    text = text.replace(
+    # Better header.
+    text = _replace(
+        text,
         '''def render_header():
     c1, c2 = st.columns([1, 6])
     with c1:
@@ -85,6 +68,7 @@ def _patch_app_source():
 '''
     )
 
+    # Responsive CSS: PC table, mobile cards.
     css_marker = '''    .stApp {{ background: #fbfcfb; }}
 '''
     css_insert = '''    .stApp {{ background: #fbfcfb; }}
@@ -104,9 +88,10 @@ def _patch_app_source():
         .mobile-archive {{ display:none !important; }}
     }}
 '''
-    if css_insert not in text:
+    if ".mobile-archive" not in text and css_marker in text:
         text = text.replace(css_marker, css_insert)
 
+    # Archive: remove audit column and sort rows by client surname/name by default.
     text = text.replace(', "Inserita il", "ID", "Client ID"', ', "ID", "Client ID"')
     text = text.replace(', "Inserita il", "ID", "Client ID"]', ', "ID", "Client ID"]')
     text = text.replace(', "Inserita il": b.get("created_at")', '')
@@ -117,6 +102,17 @@ def _patch_app_source():
         'return df.sort_values(["Cliente", "_sort", "Ora"]).drop(columns=["_sort"]).reset_index(drop=True)',
     )
 
+    # Force AgGrid itself to open sorted by Cliente on PC.
+    text = text.replace(
+        '    gb.configure_column("Cliente", editable=False, width=230, pinned="left", cellStyle=cell_style("left", bold=True, color="#1f5c8f"))\n',
+        '    gb.configure_column("Cliente", editable=False, width=230, pinned="left", sort="asc", sortIndex=0, cellStyle=cell_style("left", bold=True, color="#1f5c8f"))\n'
+    )
+    text = text.replace(
+        '    gb.configure_column("Cliente", editable=False, width=230, pinned="left", sort="asc", sortIndex=0, cellStyle=cell_style("left", bold=True, color="#1f5c8f"))\n',
+        '    gb.configure_column("Cliente", editable=False, width=230, pinned="left", sort="asc", sortIndex=0, cellStyle=cell_style("left", bold=True, color="#1f5c8f"))\n'
+    )
+
+    # Sort Data by hidden ISO value when the user clicks the column.
     text = text.replace(
         '    gb.configure_column("Data", editable=False, width=160, cellStyle=cell_style("center"))\n',
         '''    gb.configure_column(
@@ -138,26 +134,7 @@ def _patch_app_source():
 '''
     )
 
-    old_make_pdf = '''def make_pdf(df, label=""):
-    bio = BytesIO()
-    doc = SimpleDocTemplate(bio, pagesize=landscape(A4), rightMargin=.6*cm, leftMargin=.6*cm, topMargin=.7*cm, bottomMargin=.7*cm)
-    styles = getSampleStyleSheet()
-    elems = []
-    if Path(LOGO_PATH).exists():
-        elems.append(Image(LOGO_PATH, width=2.0*cm, height=3.0*cm))
-    elems += [Paragraph("Archivio prenotazioni Pilates - Body Center", styles["Title"]), Paragraph(label, styles["Normal"]), Spacer(1, .25*cm)]
-    cols = ["Data", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Importo", "Pagato", "Note cliente"]
-    pdf = df[cols].copy() if not df.empty else pd.DataFrame(columns=cols)
-    pdf["Pagato"] = pdf["Pagato"].map(lambda x: "Sì" if to_bool(x) else "No")
-    pdf["Importo"] = pdf["Importo"].map(lambda x: f"€ {money(x):.2f}")
-    data = [cols] + pdf.fillna("").astype(str).values.tolist()
-    tab = Table(data, repeatRows=1)
-    tab.setStyle(TableStyle([("BACKGROUND", (0,0), (-1,0), colors.HexColor(GREEN)), ("TEXTCOLOR", (0,0), (-1,0), colors.white), ("GRID", (0,0), (-1,-1), .25, colors.lightgrey), ("VALIGN", (0,0), (-1,-1), "MIDDLE")]))
-    elems.append(tab)
-    doc.build(elems)
-    bio.seek(0)
-    return bio.getvalue()
-'''
+    # PDF with revenue summary.
     new_make_pdf = '''def make_pdf(df, label=""):
     bio = BytesIO()
     doc = SimpleDocTemplate(bio, pagesize=landscape(A4), rightMargin=.6*cm, leftMargin=.6*cm, topMargin=.7*cm, bottomMargin=.7*cm)
@@ -203,10 +180,11 @@ def _patch_app_source():
     bio.seek(0)
     return bio.getvalue()
 '''
-    text = text.replace(old_make_pdf, new_make_pdf)
+    text = re.sub(r'def make_pdf\(df, label=""\):\n.*?\n\ndef app_css\(\):', new_make_pdf + '\n\ndef app_css():', text, flags=re.S)
 
-    # Force AgGrid to rebuild after editing a client from Archivio/Clienti.
-    text = text.replace(
+    # Refresh and close client card after saving.
+    text = _replace(
+        text,
         '''        if ok:
             save_data(data, sha, "Update client record")
             st.success(msg)
@@ -223,13 +201,9 @@ def _patch_app_source():
             st.rerun()
 '''
     )
-
-    text = text.replace(
-        '    selected = client_grid(view, "client_grid")\n',
-        '    selected = client_grid(view, f"client_grid_{st.session_state.get(\'client_nonce\', 0)}")\n'
-    )
-
-    text = text.replace(
+    text = _replace(text, '    selected = client_grid(view, "client_grid")\n', '    selected = client_grid(view, f"client_grid_{st.session_state.get(\'client_nonce\', 0)}")\n')
+    text = _replace(
+        text,
         '''section = st.radio("Sezione", SECTIONS, horizontal=True, key="section", label_visibility="collapsed")
 st.divider()
 ''',
@@ -241,28 +215,7 @@ st.divider()
 '''
     )
 
-    for block in [
-        '''    st.markdown("#### Archivio telefono")
-    archive_mobile_cards(df, data, sha)
-    if not st.toggle("💻 Mostra tabella PC", value=False, key="archive_show_pc_table_v3"):
-        return
-
-''',
-        '''    if st.toggle("📱 Vista compatta telefono", key="archive_mobile_view"):
-        archive_mobile_cards(df, data, sha)
-        return
-''',
-        '''    if st.toggle("📱 Vista compatta telefono", value=True, key="archive_mobile_view"):
-        archive_mobile_cards(df, data, sha)
-        return
-''',
-        '''    if st.toggle("📱 Vista compatta telefono", value=True, key="archive_mobile_view_v2"):
-        archive_mobile_cards(df, data, sha)
-        return
-''',
-    ]:
-        text = text.replace(block, '')
-
+    # Mobile archive helpers.
     mobile_helpers = '''
 
 def is_mobile_client():
@@ -307,11 +260,9 @@ def archive_mobile_html(df):
         text = text.replace(marker, mobile_helpers + marker)
 
     insert_marker = '    st.markdown("#### Modifica importi, pagamenti e note")\n'
-    mobile_call_old = '    archive_mobile_html(df)\n'
-    mobile_call_new = '    archive_mobile_html(df)\n    if is_mobile_client():\n        return\n'
-    text = text.replace(mobile_call_new, '')
-    text = text.replace(mobile_call_old, '')
-    text = text.replace(insert_marker, mobile_call_new + insert_marker)
+    text = text.replace('    archive_mobile_html(df)\n    if is_mobile_client():\n        return\n', '')
+    text = text.replace('    archive_mobile_html(df)\n', '')
+    text = text.replace(insert_marker, '    archive_mobile_html(df)\n    if is_mobile_client():\n        return\n' + insert_marker)
 
     if text != original:
         path.write_text(text, encoding="utf-8")
