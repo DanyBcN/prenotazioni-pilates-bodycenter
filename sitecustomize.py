@@ -34,17 +34,14 @@ def _patch_app_source():
     if css_insert not in text:
         text = text.replace(css_marker, css_insert)
 
-    # Hide/remove the audit column from the archive table. Keep the raw data untouched.
     text = text.replace(', "Inserita il", "ID", "Client ID"', ', "ID", "Client ID"')
     text = text.replace(', "Inserita il", "ID", "Client ID"]', ', "ID", "Client ID"]')
     text = text.replace(', "Inserita il": b.get("created_at")', '')
     text = text.replace('    gb.configure_column("Inserita il", editable=False, width=170, cellStyle=cell_style("center"))\n', '')
     text = text.replace('    gb.configure_column("Inserita il", editable=False, width=168, cellStyle=cell_style("center"))\n', '')
 
-    # Sort archive rows alphabetically by client surname/name, then date and time.
     text = text.replace('return df.sort_values(["_sort", "Ora", "Cliente"]).drop(columns=["_sort"]).reset_index(drop=True)', 'return df.sort_values(["Cliente", "_sort", "Ora"]).drop(columns=["_sort"]).reset_index(drop=True)')
 
-    # When clicking the visible Data column, sort by the hidden ISO date, not by the pretty text.
     old_data_col = '    gb.configure_column("Data", editable=False, width=160, cellStyle=cell_style("center"))\n'
     new_data_col = '''    gb.configure_column(
         "Data",
@@ -68,7 +65,7 @@ def _patch_app_source():
     mobile_functions = '''
 
 def archive_mobile_cards(df, data, sha):
-    st.caption("Vista compatta per telefono. Per modificare importi, pagamenti ed email usa la vista tabella.")
+    st.caption("Vista compatta per telefono. Per modificare importi, pagamenti ed email usa la vista tabella PC.")
     if df.empty:
         st.info("Nessuna prenotazione nel periodo selezionato.")
         return
@@ -104,28 +101,33 @@ def clients_mobile_cards(view, data, sha):
     if 'def archive_mobile_cards(' not in text:
         text = text.replace(marker, mobile_functions + marker)
 
-    clients_toggle = '''    if st.toggle("📱 Vista compatta telefono", key="clients_mobile_view"):
+    clients_toggle_old = '''    if st.toggle("📱 Vista compatta telefono", key="clients_mobile_view"):
         clients_mobile_cards(view, data, sha)
         return
 '''
-    archive_toggle = '''    if st.toggle("📱 Vista compatta telefono", key="archive_mobile_view"):
+    archive_toggle_old = '''    if st.toggle("📱 Vista compatta telefono", key="archive_mobile_view"):
         archive_mobile_cards(df, data, sha)
         return
 '''
-    text = text.replace(clients_toggle, '')
-    text = text.replace(archive_toggle, '')
+    archive_toggle_old_default = '''    if st.toggle("📱 Vista compatta telefono", value=True, key="archive_mobile_view"):
+        archive_mobile_cards(df, data, sha)
+        return
+'''
+    text = text.replace(clients_toggle_old, '')
+    text = text.replace(archive_toggle_old, '')
+    text = text.replace(archive_toggle_old_default, '')
 
     old_clients_view = '''    st.caption("Tabella clienti: clicca una riga per aprire la scheda qui sotto.")
     selected = client_grid(view, "client_grid")
 '''
-    new_clients_view = clients_toggle + old_clients_view
+    new_clients_view = clients_toggle_old + old_clients_view
     text = text.replace(old_clients_view, new_clients_view)
 
     old_archive_view = '''    st.caption("Colonne editabili evidenziate: Email, Importo, Pagato e Note cliente. Clicca una riga per aprire la scheda cliente sotto.")
     grid_key = f"archive_grid_{st.session_state.get('archive_nonce', 0)}"
 '''
-    new_archive_view = '''    st.caption("Colonne editabili evidenziate: Email, Importo, Pagato e Note cliente. Clicca una riga per aprire la scheda cliente sotto.")
-''' + archive_toggle + '''    grid_key = f"archive_grid_{st.session_state.get('archive_nonce', 0)}"
+    new_archive_view = '''    st.caption("Da telefono resta attiva la vista compatta. Disattivala solo da PC per modificare la tabella completa.")
+''' + archive_toggle_old_default + '''    grid_key = f"archive_grid_{st.session_state.get('archive_nonce', 0)}"
 '''
     text = text.replace(old_archive_view, new_archive_view)
 
