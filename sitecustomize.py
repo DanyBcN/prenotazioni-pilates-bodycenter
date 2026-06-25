@@ -30,6 +30,13 @@ def _patch_app_source():
     if css_insert not in text:
         text = text.replace(css_marker, css_insert)
 
+    # Hide/remove the audit column from the archive table. Keep the raw data untouched.
+    text = text.replace(', "Inserita il", "ID", "Client ID"', ', "ID", "Client ID"')
+    text = text.replace(', "Inserita il", "ID", "Client ID"]', ', "ID", "Client ID"]')
+    text = text.replace(', "Inserita il": b.get("created_at")', '')
+    text = text.replace('    gb.configure_column("Inserita il", editable=False, width=170, cellStyle=cell_style("center"))\n', '')
+    text = text.replace('    gb.configure_column("Inserita il", editable=False, width=168, cellStyle=cell_style("center"))\n', '')
+
     if text != original:
         path.write_text(text, encoding="utf-8")
 
