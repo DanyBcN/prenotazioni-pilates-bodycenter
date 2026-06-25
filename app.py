@@ -15,6 +15,12 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+try:
+    from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
+    AGGRID_AVAILABLE = True
+except Exception:
+    AGGRID_AVAILABLE = False
+
 APP_TITLE = "Prenotazioni Pilates Reformer"
 CAPACITY = 4
 LOCAL_DATA_PATH = "data/bookings.json"
@@ -22,6 +28,7 @@ LOGO_PATH = "assets/logo.png"
 INSTRUCTORS = ["Grazia", "Alice"]
 GREEN = "#496744"
 DARK = "#243142"
+LIGHT_GREEN = "#eef6f2"
 SCHEDULE = {
     0: ["08:30", "09:30", "10:30", "17:00", "18:00", "19:00"],
     1: ["09:30", "10:30", "11:30", "12:45", "14:30", "19:00"],
@@ -44,7 +51,11 @@ def github_enabled():
 
 
 def github_headers():
-    return {"Authorization": f"Bearer {get_secret('GITHUB_TOKEN')}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+    return {
+        "Authorization": f"Bearer {get_secret('GITHUB_TOKEN')}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
 
 
 def github_file_url():
@@ -53,7 +64,11 @@ def github_file_url():
 
 def save_data(data, sha=None, message="Update data"):
     if github_enabled():
-        body = {"message": message, "content": base64.b64encode(json.dumps(data, ensure_ascii=False, indent=2).encode()).decode(), "branch": get_secret("GITHUB_BRANCH", "main")}
+        body = {
+            "message": message,
+            "content": base64.b64encode(json.dumps(data, ensure_ascii=False, indent=2).encode()).decode(),
+            "branch": get_secret("GITHUB_BRANCH", "main"),
+        }
         if sha:
             body["sha"] = sha
         r = requests.put(github_file_url(), headers=github_headers(), json=body, timeout=20)
@@ -61,8 +76,8 @@ def save_data(data, sha=None, message="Update data"):
             st.error("Conflitto: ricarica la pagina e riprova.")
             st.stop()
         r.raise_for_status()
-    else:
-        Path(LOCAL_DATA_PATH).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        return
+    Path(LOCAL_DATA_PATH).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def load_data():
@@ -73,8 +88,8 @@ def load_data():
             save_data(data, None, "Initialize storage")
             return data, None
         r.raise_for_status()
-        p = r.json()
-        return json.loads(base64.b64decode(p["content"]).decode()), p.get("sha")
+        payload = r.json()
+        return json.loads(base64.b64decode(payload["content"]).decode()), payload.get("sha")
     p = Path(LOCAL_DATA_PATH)
     if not p.exists():
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -154,6 +169,9 @@ def ensure_data(data):
     data.setdefault("bookings", [])
     data.setdefault("clients", [])
     for c in data["clients"]:
+        c.setdefault("id", new_id("c_"))
+        c.setdefault("first_name", "")
+        c.setdefault("last_name", "")
         c.setdefault("phone", "")
         c.setdefault("email", "")
         c.setdefault("notes", "")
@@ -162,10 +180,12 @@ def ensure_data(data):
         c.setdefault("goals", "")
     keys = {client_key(c.get("first_name", ""), c.get("last_name", "")): c for c in data["clients"]}
     for b in data["bookings"]:
+        b.setdefault("id", new_id("b_"))
         b.setdefault("amount", 0)
         b.setdefault("paid", False)
         b.setdefault("note", "")
         b.setdefault("instructor", "")
+        b.setdefault("email", "")
         if b.get("client_id"):
             continue
         first, last = split_name(b.get("name", ""))
@@ -173,7 +193,18 @@ def ensure_data(data):
         if k.strip("|") and k in keys:
             b["client_id"] = keys[k]["id"]
         elif k.strip("|"):
-            c = {"id": new_id("c_"), "first_name": first, "last_name": last, "phone": b.get("phone", ""), "email": b.get("email", ""), "notes": "", "birth_date": "", "anamnesis": "", "goals": "", "created_at": datetime.now().isoformat(timespec="seconds")}
+            c = {
+                "id": new_id("c_"),
+                "first_name": first,
+                "last_name": last,
+                "phone": b.get("phone", ""),
+                "email": b.get("email", ""),
+                "notes": "",
+                "birth_date": "",
+                "anamnesis": "",
+                "goals": "",
+                "created_at": datetime.now().isoformat(timespec="seconds"),
+            }
             data["clients"].append(c)
             keys[k] = c
             b["client_id"] = c["id"]
@@ -201,7 +232,18 @@ def add_client(data, first, last, phone="", email="", notes="", birth_date="", a
         if client_key(c.get("first_name", ""), c.get("last_name", "")) == k:
             return False, "Cliente già presente: nome e cognome devono essere univoci.", c.get("id")
     cid = new_id("c_")
-    data["clients"].append({"id": cid, "first_name": first, "last_name": last, "phone": phone.strip(), "email": email.strip(), "notes": notes.strip(), "birth_date": birth_date.strip(), "anamnesis": anamnesis.strip(), "goals": goals.strip(), "created_at": datetime.now().isoformat(timespec="seconds")})
+    data["clients"].append({
+        "id": cid,
+        "first_name": first,
+        "last_name": last,
+        "phone": phone.strip(),
+        "email": email.strip(),
+        "notes": notes.strip(),
+        "birth_date": birth_date.strip(),
+        "anamnesis": anamnesis.strip(),
+        "goals": goals.strip(),
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+    })
     return True, "Cliente salvato.", cid
 
 
@@ -216,7 +258,16 @@ def update_client_record(data, cid, first, last, phone, email, birth, notes, ana
     for other in data.get("clients", []):
         if other.get("id") != cid and client_key(other.get("first_name", ""), other.get("last_name", "")) == k:
             return False, "Esiste già un altro cliente con lo stesso nome e cognome."
-    c.update({"first_name": first, "last_name": last, "phone": phone.strip(), "email": email.strip(), "birth_date": birth.strip(), "notes": notes.strip(), "anamnesis": anamnesis.strip(), "goals": goals.strip()})
+    c.update({
+        "first_name": first,
+        "last_name": last,
+        "phone": phone.strip(),
+        "email": email.strip(),
+        "birth_date": birth.strip(),
+        "notes": notes.strip(),
+        "anamnesis": anamnesis.strip(),
+        "goals": goals.strip(),
+    })
     for b in data.get("bookings", []):
         if b.get("client_id") == cid:
             b["name"] = full_name(c)
@@ -240,7 +291,13 @@ def clients_df(data, sort_by="Alfabetico"):
     rows = []
     for c in data.get("clients", []):
         lv = last_visit(data, c.get("id"))
-        rows.append({"ID": c.get("id"), "Cognome": c.get("last_name", ""), "Nome": c.get("first_name", ""), "Ultima lezione": date_it(lv) if lv else "", "_last": lv or date(1900, 1, 1)})
+        rows.append({
+            "ID": c.get("id"),
+            "Cognome": c.get("last_name", ""),
+            "Nome": c.get("first_name", ""),
+            "Ultima lezione": date_it(lv) if lv else "",
+            "_last": lv or date(1900, 1, 1),
+        })
     if not rows:
         return pd.DataFrame(columns=["ID", "Cognome", "Nome", "Ultima lezione", "_last"])
     df = pd.DataFrame(rows)
@@ -289,7 +346,23 @@ def create_booking(data, cid, d, t, amount, paid, instructor, note):
     c = get_client(data, cid)
     if not c:
         raise ValueError("Cliente non trovato.")
-    b = {"id": new_id("b_"), "created_at": datetime.now().isoformat(timespec="seconds"), "client_id": cid, "date": date_key(d), "day": DAY_NAMES[d.weekday()], "time": t, "name": full_name(c), "phone": c.get("phone", ""), "email": c.get("email", ""), "note": note.strip(), "status": auto_status(data, d, t), "amount": money(amount), "paid": bool(paid), "instructor": instructor, "created_by": "staff"}
+    b = {
+        "id": new_id("b_"),
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "client_id": cid,
+        "date": date_key(d),
+        "day": DAY_NAMES[d.weekday()],
+        "time": t,
+        "name": full_name(c),
+        "phone": c.get("phone", ""),
+        "email": c.get("email", ""),
+        "note": note.strip(),
+        "status": auto_status(data, d, t),
+        "amount": money(amount),
+        "paid": bool(paid),
+        "instructor": instructor,
+        "created_by": "staff",
+    }
     data["bookings"].append(b)
     return b
 
@@ -317,9 +390,26 @@ def archive_df(data):
     rows = []
     for b in data.get("bookings", []):
         c = get_client(data, b.get("client_id"))
-        rows.append({"Eliminazione": False, "ID": b.get("id"), "Client ID": b.get("client_id"), "Data": date_it(b.get("date")), "Giorno": b.get("day"), "Ora": b.get("time"), "Cliente": full_name(c) if c else b.get("name", ""), "Telefono": (c or {}).get("phone", b.get("phone", "")), "Email": (c or {}).get("email", b.get("email", "")), "Istruttrice": b.get("instructor", ""), "Stato": b.get("status"), "Importo": money(b.get("amount", 0)), "Pagato": bool(b.get("paid", False)), "Note": b.get("note", ""), "Inserita il": b.get("created_at")})
+        rows.append({
+            "Elimina": False,
+            "ID": b.get("id"),
+            "Client ID": b.get("client_id"),
+            "Data": date_it(b.get("date")),
+            "Giorno": b.get("day"),
+            "Ora": b.get("time"),
+            "Cliente": full_name(c) if c else b.get("name", ""),
+            "Telefono": (c or {}).get("phone", b.get("phone", "")),
+            "Email": (c or {}).get("email", b.get("email", "")),
+            "Istruttrice": b.get("instructor", ""),
+            "Stato": b.get("status"),
+            "Importo": money(b.get("amount", 0)),
+            "Pagato": bool(b.get("paid", False)),
+            "Note": b.get("note", ""),
+            "Inserita il": b.get("created_at"),
+        })
+    cols = ["Elimina", "ID", "Client ID", "Data", "Giorno", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Importo", "Pagato", "Note", "Inserita il"]
     if not rows:
-        return pd.DataFrame(columns=["Eliminazione", "ID", "Client ID", "Data", "Giorno", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Importo", "Pagato", "Note", "Inserita il"])
+        return pd.DataFrame(columns=cols)
     df = pd.DataFrame(rows)
     df["_sort"] = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce")
     return df.sort_values(["_sort", "Ora", "Cliente"]).drop(columns=["_sort"]).reset_index(drop=True)
@@ -362,11 +452,12 @@ def summary(df):
     return total, paid, total - paid, pd.DataFrame(rows)
 
 
-def update_archive(data, ed):
+def update_archive(data, edited_df):
     n = 0
     by_id = {b.get("id"): b for b in data.get("bookings", [])}
-    for _, r in ed.iterrows():
-        b = by_id.get(r.get("ID"))
+    for _, r in edited_df.iterrows():
+        bid = r.get("ID")
+        b = by_id.get(bid)
         if not b:
             continue
         vals = {"amount": money(r.get("Importo", 0)), "paid": bool(r.get("Pagato", False)), "note": str(r.get("Note", "") or "")}
@@ -382,8 +473,9 @@ def update_archive(data, ed):
 
 def make_excel(df):
     bio = BytesIO()
+    export = df.drop(columns=["Elimina", "ID", "Client ID"], errors="ignore")
     with pd.ExcelWriter(bio, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Archivio")
+        export.to_excel(writer, index=False, sheet_name="Archivio")
         ws = writer.sheets["Archivio"]
         for col in ws.columns:
             ws.column_dimensions[col[0].column_letter].width = min(max(max(len(str(c.value)) if c.value is not None else 0 for c in col) + 2, 10), 38)
@@ -434,19 +526,95 @@ def login():
     return False
 
 
-def style_css():
+def app_css():
     st.markdown(f"""
     <style>
-    .table-header {{background:#f4f6f8; border:1px solid #e1e4e8; padding:8px; font-weight:700; min-height:38px;}}
-    .table-cell {{border:1px solid #e1e4e8; border-top:0; padding:8px; min-height:42px; display:flex; align-items:center; overflow-wrap:anywhere;}}
-    div.stButton > button {{cursor:pointer !important;}}
-    div.stButton > button:hover {{background:#eef6f2 !important; border-color:{GREEN} !important; color:#111 !important;}}
+    .stApp {{ background: #fbfcfb; }}
+    div[data-testid="stMetric"] {{ background:#fff; border:1px solid #e6e9e6; border-radius:14px; padding:12px; }}
+    .ag-theme-streamlit, .ag-theme-balham {{ --ag-row-hover-color: {LIGHT_GREEN}; --ag-selected-row-background-color: #dceee4; }}
+    .ag-row, .ag-cell {{ cursor: pointer !important; }}
+    .ag-header-cell-label {{ font-weight: 700; }}
     </style>
     """, unsafe_allow_html=True)
 
 
-def open_client(cid):
-    st.session_state["open_client_id"] = cid
+def selected_row_from_response(response):
+    selected = response.get("selected_rows", [])
+    if selected is None:
+        return None
+    if isinstance(selected, pd.DataFrame):
+        if selected.empty:
+            return None
+        return selected.iloc[0].to_dict()
+    if isinstance(selected, list) and selected:
+        return selected[0]
+    return None
+
+
+def client_grid(df, key):
+    show = df[["ID", "Cognome", "Nome", "Ultima lezione"]].copy()
+    if not AGGRID_AVAILABLE:
+        event = st.dataframe(show.drop(columns=["ID"]), use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key=key)
+        rows = getattr(getattr(event, "selection", None), "rows", []) or []
+        return show.iloc[rows[0]].to_dict() if rows else None
+    gb = GridOptionsBuilder.from_dataframe(show)
+    gb.configure_column("ID", hide=True)
+    gb.configure_selection(selection_mode="single", use_checkbox=False)
+    gb.configure_grid_options(rowHeight=42, suppressRowClickSelection=False, rowSelection="single")
+    for col in ["Cognome", "Nome", "Ultima lezione"]:
+        gb.configure_column(col, sortable=True, filter=True, resizable=True)
+    response = AgGrid(
+        show,
+        gridOptions=gb.build(),
+        height=min(480, 80 + 43 * max(len(show), 3)),
+        fit_columns_on_grid_load=True,
+        update_mode=GridUpdateMode.SELECTION_CHANGED,
+        data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+        allow_unsafe_jscode=True,
+        custom_css={".ag-row": {"cursor": "pointer !important"}, ".ag-row-hover": {"background-color": f"{LIGHT_GREEN} !important"}},
+        key=key,
+    )
+    return selected_row_from_response(response)
+
+
+def archive_grid(df, key):
+    columns = ["Elimina", "ID", "Client ID", "Data", "Giorno", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Importo", "Pagato", "Note", "Inserita il"]
+    show = df[columns].copy()
+    if not AGGRID_AVAILABLE:
+        edited = st.data_editor(show.drop(columns=["Client ID"], errors="ignore"), use_container_width=True, hide_index=True, key=key)
+        return edited, None
+    gb = GridOptionsBuilder.from_dataframe(show)
+    gb.configure_column("ID", hide=True)
+    gb.configure_column("Client ID", hide=True)
+    gb.configure_column("Elimina", editable=True, width=95)
+    gb.configure_column("Data", editable=False, width=110)
+    gb.configure_column("Giorno", editable=False, width=120)
+    gb.configure_column("Ora", editable=False, width=90)
+    gb.configure_column("Cliente", editable=False, minWidth=190, pinned="left", cellStyle={"fontWeight": "600", "color": "#1f5c8f", "cursor": "pointer"})
+    gb.configure_column("Telefono", editable=False, width=140)
+    gb.configure_column("Email", editable=False, width=210)
+    gb.configure_column("Istruttrice", editable=False, width=120)
+    gb.configure_column("Stato", editable=False, width=130)
+    gb.configure_column("Importo", editable=True, type=["numericColumn"], width=110)
+    gb.configure_column("Pagato", editable=True, width=100)
+    gb.configure_column("Note", editable=True, minWidth=260, wrapText=True, autoHeight=True)
+    gb.configure_column("Inserita il", editable=False, width=180)
+    gb.configure_selection(selection_mode="single", use_checkbox=False)
+    gb.configure_grid_options(rowHeight=40, suppressRowClickSelection=False, rowSelection="single")
+    response = AgGrid(
+        show,
+        gridOptions=gb.build(),
+        height=520,
+        fit_columns_on_grid_load=False,
+        update_mode=GridUpdateMode.SELECTION_CHANGED | GridUpdateMode.VALUE_CHANGED,
+        data_return_mode=DataReturnMode.AS_INPUT,
+        allow_unsafe_jscode=True,
+        custom_css={".ag-row": {"cursor": "pointer !important"}, ".ag-row-hover": {"background-color": f"{LIGHT_GREEN} !important"}},
+        key=key,
+    )
+    edited = pd.DataFrame(response.get("data", show))
+    selected = selected_row_from_response(response)
+    return edited, selected
 
 
 def render_client_card(data, sha, cid, prefix="client"):
@@ -483,43 +651,8 @@ def render_client_card(data, sha, cid, prefix="client"):
         st.dataframe(pd.DataFrame(hist).sort_values(["Data", "Ora"]), use_container_width=True, hide_index=True)
 
 
-def render_client_table(df, key_prefix):
-    h = st.columns([2, 2, 2])
-    for col, title in zip(h, ["Cognome", "Nome", "Ultima lezione"]):
-        col.markdown(f"<div class='table-header'>{title}</div>", unsafe_allow_html=True)
-    for idx, r in df.reset_index(drop=True).iterrows():
-        c1, c2, c3 = st.columns([2, 2, 2])
-        if c1.button(str(r["Cognome"]), key=f"{key_prefix}_client_{r['ID']}_{idx}", use_container_width=True):
-            open_client(r["ID"])
-            st.rerun()
-        c2.markdown(f"<div class='table-cell'>{r['Nome']}</div>", unsafe_allow_html=True)
-        c3.markdown(f"<div class='table-cell'>{r['Ultima lezione'] or ''}</div>", unsafe_allow_html=True)
-
-
-def render_archive_click_table(df):
-    widths = [1.2, 1.2, 1, 2.2, 1.5, 1.9, 1.4, 1.3, 1, 1, 2.0]
-    headers = ["Data", "Giorno", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Importo", "Pagato", "Note"]
-    cols = st.columns(widths)
-    for col, title in zip(cols, headers):
-        col.markdown(f"<div class='table-header'>{title}</div>", unsafe_allow_html=True)
-    for idx, r in df.reset_index(drop=True).iterrows():
-        cols = st.columns(widths)
-        values = [r.get("Data", ""), r.get("Giorno", ""), r.get("Ora", "")]
-        for col, val in zip(cols[:3], values):
-            col.markdown(f"<div class='table-cell'>{val}</div>", unsafe_allow_html=True)
-        cid = r.get("Client ID")
-        if cid and cols[3].button(str(r.get("Cliente", "")), key=f"arch_open_{r.get('ID')}_{idx}", use_container_width=True):
-            open_client(cid)
-            st.rerun()
-        elif not cid:
-            cols[3].markdown(f"<div class='table-cell'>{r.get('Cliente','')}</div>", unsafe_allow_html=True)
-        other = [r.get("Telefono", ""), r.get("Email", ""), r.get("Istruttrice", ""), r.get("Stato", ""), f"€ {money(r.get('Importo', 0)):.2f}", "Sì" if bool(r.get("Pagato")) else "No", r.get("Note", "")]
-        for col, val in zip(cols[4:], other):
-            col.markdown(f"<div class='table-cell'>{str(val)}</div>", unsafe_allow_html=True)
-
-
 st.set_page_config(page_title=APP_TITLE, page_icon="🧘", layout="wide")
-style_css()
+app_css()
 
 c1, c2 = st.columns([1, 6])
 with c1:
@@ -542,6 +675,8 @@ except Exception as e:
 
 if not github_enabled():
     st.warning("Modalità locale: per condivisione usa i Secrets GitHub su Streamlit.")
+if not AGGRID_AVAILABLE:
+    st.warning("AgGrid non è ancora installato: fai Reboot app da Streamlit Cloud.")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📅 Settimana", "➕ Prenota", "👤 Clienti", "🔎 Cerca", "📋 Archivio"])
 
@@ -562,23 +697,23 @@ with tab1:
                     st.info(label)
                 else:
                     st.success(label)
-                for j, b in enumerate(conf, 1):
-                    st.write(f"{j}. {b.get('name','')} · {b.get('instructor','')} · € {money(b.get('amount',0)):.2f} · {'pagato' if b.get('paid') else 'non pagato'}")
+                for j, bkg in enumerate(conf, 1):
+                    st.write(f"{j}. {bkg.get('name','')} · {bkg.get('instructor','')} · € {money(bkg.get('amount',0)):.2f} · {'pagato' if bkg.get('paid') else 'non pagato'}")
                 if wait:
                     st.caption("Lista d'attesa:")
-                    for b in wait:
-                        st.caption(f"• {b.get('name','')} · {b.get('phone','')}")
+                    for bkg in wait:
+                        st.caption(f"• {bkg.get('name','')} · {bkg.get('phone','')}")
                 with st.expander("Gestisci"):
-                    for b in slot_rows(data, d, t, True):
-                        st.markdown(f"**{status_icon(b.get('status'))} {b.get('name','')}** — {b.get('phone','')}")
+                    for bkg in slot_rows(data, d, t, True):
+                        st.markdown(f"**{status_icon(bkg.get('status'))} {bkg.get('name','')}** — {bkg.get('phone','')}")
                         a, b2, c = st.columns(3)
-                        if a.button("Conferma", key=f"c{b['id']}") and change_status(data, b["id"], "Confermata"):
+                        if a.button("Conferma", key=f"c{bkg['id']}") and change_status(data, bkg["id"], "Confermata"):
                             save_data(data, sha, "Conferma")
                             st.rerun()
-                        if b2.button("Attesa", key=f"w{b['id']}") and change_status(data, b["id"], "Lista attesa"):
+                        if b2.button("Attesa", key=f"w{bkg['id']}") and change_status(data, bkg["id"], "Lista attesa"):
                             save_data(data, sha, "Attesa")
                             st.rerun()
-                        if c.button("Annulla", key=f"x{b['id']}") and change_status(data, b["id"], "Annullata"):
+                        if c.button("Annulla", key=f"x{bkg['id']}") and change_status(data, bkg["id"], "Annullata"):
                             save_data(data, sha, "Annulla")
                             st.rerun()
 
@@ -656,8 +791,10 @@ with tab3:
     else:
         q = st.text_input("Cerca cliente").lower().strip()
         view = dfc[dfc.apply(lambda r: q in " ".join(map(str, r.values)).lower(), axis=1)] if q else dfc
-        st.caption("Clicca sul cognome per aprire la scheda qui sotto, senza cambiare pagina.")
-        render_client_table(view, "clienti")
+        st.caption("Tabella clienti: clicca una riga per aprire la scheda qui sotto.")
+        selected = client_grid(view, "client_grid")
+        if selected:
+            st.session_state["open_client_id"] = selected.get("ID")
         cid_open = st.session_state.get("open_client_id")
         if cid_open:
             st.divider()
@@ -669,7 +806,7 @@ with tab4:
     dfa = archive_df(data)
     if q and not dfa.empty:
         res = dfa[dfa.apply(lambda r: q in " ".join(map(str, r.values)).lower(), axis=1)]
-        st.dataframe(res.drop(columns=["Eliminazione", "ID", "Client ID"], errors="ignore"), use_container_width=True, hide_index=True)
+        st.dataframe(res.drop(columns=["Elimina", "ID", "Client ID"], errors="ignore"), use_container_width=True, hide_index=True)
 
 with tab5:
     st.subheader("Archivio, pagamenti e statistiche")
@@ -703,25 +840,25 @@ with tab5:
         df = dfp.copy() if only else dfa.copy()
         if status:
             df = df[df["Stato"].isin(status)]
-        st.caption("Archivio come prima: clicca sul nome cliente per aprire la scheda qui sotto.")
-        render_archive_click_table(df)
+        st.markdown("#### Modifica importi, pagamenti e note")
+        st.caption("Una sola tabella: modifica Importo/Pagato/Note, spunta Elimina per cancellare, clicca una riga per aprire la scheda cliente sotto.")
+        edited, selected = archive_grid(df, "archive_grid")
+        if selected and selected.get("Client ID"):
+            st.session_state["open_client_id"] = selected.get("Client ID")
         cid_open = st.session_state.get("open_client_id")
         if cid_open:
             st.divider()
             render_client_card(data, sha, cid_open, prefix="archivio")
-        st.markdown("#### Modifica importi, pagamenti e note")
-        cols = ["Eliminazione", "Data", "Giorno", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Importo", "Pagato", "Note", "Inserita il", "ID"]
-        ed = st.data_editor(df[cols], use_container_width=True, hide_index=True, column_config={"Eliminazione": st.column_config.CheckboxColumn("Eliminazione"), "Pagato": st.column_config.CheckboxColumn("Pagato"), "Importo": st.column_config.NumberColumn("Importo (€)", min_value=0.0, step=1.0, format="%.2f"), "Note": st.column_config.TextColumn("Note"), "ID": None}, disabled=["Data", "Giorno", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Inserita il"], key="aed")
         a, b = st.columns(2)
         if a.button("Salva modifiche importi/pagamenti/note"):
-            n = update_archive(data, ed)
+            n = update_archive(data, edited)
             if n:
-                st.success(f"Aggiornate {n} prenotazioni.")
                 save_data(data, sha, "Update archive")
+                st.success(f"Aggiornate {n} prenotazioni.")
                 st.rerun()
             else:
                 st.info("Nessuna modifica da salvare.")
-        ids = ed.loc[ed["Eliminazione"] == True, "ID"].dropna().astype(str).tolist()
+        ids = edited.loc[edited.get("Elimina", False) == True, "ID"].dropna().astype(str).tolist() if not edited.empty else []
         if b.button("Elimina selezionate", type="primary"):
             if not ids:
                 st.error("Non hai selezionato nessuna prenotazione da eliminare.")
@@ -730,7 +867,6 @@ with tab5:
                 save_data(data, sha, "Delete bookings")
                 st.success(f"Eliminate {n} prenotazioni.")
                 st.rerun()
-        vis = ed.drop(columns=["Eliminazione", "ID"], errors="ignore")
         a, b = st.columns(2)
-        a.download_button("Scarica Excel", data=make_excel(vis), file_name="prenotazioni_pilates.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        b.download_button("Scarica PDF archivio", data=make_pdf(vis, label), file_name="archivio_prenotazioni_pilates.pdf", mime="application/pdf")
+        a.download_button("Scarica Excel", data=make_excel(edited), file_name="prenotazioni_pilates.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        b.download_button("Scarica PDF archivio", data=make_pdf(edited, label), file_name="archivio_prenotazioni_pilates.pdf", mime="application/pdf")
