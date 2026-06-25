@@ -30,7 +30,7 @@ def _patch_app_source():
     text = text.replace(old_header, new_header)
 
     css_marker = """    .stApp {{ background: #fbfcfb; }}\n"""
-    css_insert = """    .stApp {{ background: #fbfcfb; }}\n    .block-container {{ padding-top:1rem !important; max-width:1240px !important; }}\n    div[data-testid=\"stRadio\"] > div {{ gap:.65rem !important; flex-wrap:wrap !important; }}\n    div[data-testid=\"stRadio\"] label {{ min-height:42px !important; padding:.55rem 1rem !important; border-radius:999px !important; border:1px solid #dce6dc !important; background:#fff !important; box-shadow:0 3px 10px rgba(36,49,66,.045) !important; }}\n    div[data-testid=\"stRadio\"] input[type=\"radio\"] {{ display:none !important; }}\n    div[data-testid=\"stRadio\"] label:has(input:checked) {{ background:#496744 !important; border-color:#496744 !important; }}\n    div[data-testid=\"stRadio\"] label:has(input:checked) p {{ color:#fff !important; }}\n"""
+    css_insert = """    .stApp {{ background: #fbfcfb; }}\n    .block-container {{ padding-top:1rem !important; max-width:1240px !important; }}\n    div[data-testid=\"stRadio\"] > div {{ gap:.65rem !important; flex-wrap:wrap !important; }}\n    div[data-testid=\"stRadio\"] label {{ min-height:42px !important; padding:.55rem 1rem !important; border-radius:999px !important; border:1px solid #dce6dc !important; background:#fff !important; box-shadow:0 3px 10px rgba(36,49,66,.045) !important; }}\n    div[data-testid=\"stRadio\"] input[type=\"radio\"] {{ display:none !important; }}\n    div[data-testid=\"stRadio\"] label:has(input:checked) {{ background:#496744 !important; border-color:#496744 !important; }}\n    div[data-testid=\"stRadio\"] label:has(input:checked) p {{ color:#fff !important; }}\n    @media (max-width:760px) {{\n        .block-container {{ padding-left:.45rem !important; padding-right:.45rem !important; max-width:100% !important; }}\n        .ag-cell {{ font-size:12px !important; padding-left:4px !important; padding-right:4px !important; }}\n        .ag-header-cell-text {{ font-size:11px !important; }}\n    }}\n"""
     if css_insert not in text:
         text = text.replace(css_marker, css_insert)
 
@@ -64,6 +64,67 @@ def _patch_app_source():
     )
 '''
     text = text.replace(old_data_col, new_data_col)
+
+    mobile_functions = '''
+
+def archive_mobile_cards(df, data, sha):
+    st.caption("Vista compatta per telefono. Per modificare importi, pagamenti ed email usa la vista tabella.")
+    if df.empty:
+        st.info("Nessuna prenotazione nel periodo selezionato.")
+        return
+    for _, r in df.iterrows():
+        with st.container(border=True):
+            st.markdown(f"**{r.get('Cliente', '')}**")
+            st.caption(f"{r.get('Data', '')} · {r.get('Ora', '')} · {r.get('Stato', '')}")
+            st.write(f"📞 {r.get('Telefono', '')}")
+            if str(r.get('Email', '') or '').strip():
+                st.write(f"✉️ {r.get('Email', '')}")
+            st.write(f"💶 € {money(r.get('Importo', 0)):.2f} · {'Pagato' if to_bool(r.get('Pagato', False)) else 'Non pagato'}")
+            note = str(r.get('Note cliente', '') or '').strip()
+            if note:
+                st.write(f"📝 {note}")
+            if r.get('Client ID') and st.button("Apri scheda cliente", key=f"mobile_archive_{r.get('ID')}"):
+                render_client_card(data, sha, r.get('Client ID'), prefix=f"mobile_archive_{r.get('ID')}")
+
+
+def clients_mobile_cards(view, data, sha):
+    st.caption("Vista compatta per telefono.")
+    if view.empty:
+        st.info("Nessun cliente trovato.")
+        return
+    for _, r in view.iterrows():
+        with st.container(border=True):
+            st.markdown(f"**{r.get('Cognome', '')} {r.get('Nome', '')}**")
+            if str(r.get('Ultima lezione', '') or '').strip():
+                st.caption(f"Ultima lezione: {r.get('Ultima lezione', '')}")
+            if st.button("Apri scheda", key=f"mobile_client_{r.get('ID')}"):
+                render_client_card(data, sha, r.get('ID'), prefix=f"mobile_client_{r.get('ID')}")
+'''
+    marker = '\n\ndef render_client_card(data, sha, cid, prefix="client"):\n'
+    if 'def archive_mobile_cards(' not in text:
+        text = text.replace(marker, mobile_functions + marker)
+
+    old_clients_view = '''    st.caption("Tabella clienti: clicca una riga per aprire la scheda qui sotto.")
+    selected = client_grid(view, "client_grid")
+'''
+    new_clients_view = '''    if st.toggle("📱 Vista compatta telefono", key="clients_mobile_view"):
+        clients_mobile_cards(view, data, sha)
+        return
+    st.caption("Tabella clienti: clicca una riga per aprire la scheda qui sotto.")
+    selected = client_grid(view, "client_grid")
+'''
+    text = text.replace(old_clients_view, new_clients_view)
+
+    old_archive_view = '''    st.caption("Colonne editabili evidenziate: Email, Importo, Pagato e Note cliente. Clicca una riga per aprire la scheda cliente sotto.")
+    grid_key = f"archive_grid_{st.session_state.get('archive_nonce', 0)}"
+'''
+    new_archive_view = '''    st.caption("Colonne editabili evidenziate: Email, Importo, Pagato e Note cliente. Clicca una riga per aprire la scheda cliente sotto.")
+    if st.toggle("📱 Vista compatta telefono", key="archive_mobile_view"):
+        archive_mobile_cards(df, data, sha)
+        return
+    grid_key = f"archive_grid_{st.session_state.get('archive_nonce', 0)}"
+'''
+    text = text.replace(old_archive_view, new_archive_view)
 
     if text != original:
         path.write_text(text, encoding="utf-8")
