@@ -118,23 +118,6 @@
       "created_by": "staff",
       "client_id": "c_20260625000100987115",
       "email": ""
-    },
-    {
-      "id": "b_20260625091851531981",
-      "created_at": "2026-06-25T09:18:51",
-      "client_id": "c_20260625073427639935",
-      "date": "2026-06-26",
-      "day": "Venerdì",
-      "time": "15:00",
-      "name": "Bramard Ezio",
-      "phone": "3384546",
-      "email": "ezio@newbodycenter.it",
-      "note": "",
-      "status": "Confermata",
-      "amount": 30.0,
-      "paid": false,
-      "instructor": "Grazia",
-      "created_by": "staff"
     }
   ],
   "clients": [
