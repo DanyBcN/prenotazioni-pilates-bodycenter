@@ -252,6 +252,18 @@
       "anamnesis": "",
       "goals": "",
       "created_at": "2026-06-25T10:55:21"
+    },
+    {
+      "id": "c_20260625105538465312",
+      "first_name": "Germana",
+      "last_name": "Allocco",
+      "phone": "",
+      "email": "",
+      "notes": "",
+      "birth_date": "",
+      "anamnesis": "",
+      "goals": "",
+      "created_at": "2026-06-25T10:55:38"
     }
   ]
 }
