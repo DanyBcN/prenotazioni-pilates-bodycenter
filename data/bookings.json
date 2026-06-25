@@ -14,7 +14,8 @@
       "paid": false,
       "instructor": "Grazia",
       "created_by": "staff",
-      "client_id": "c_20260625000100987010"
+      "client_id": "c_20260625000100987010",
+      "email": ""
     },
     {
       "id": "20260624224306383014",
@@ -174,9 +175,9 @@
       "last_name": "Amica",
       "phone": "3483122325",
       "email": "chiaramarce@gmail.com",
-      "notes": "Chiara conduce una vita prevalentemente sedentaria a causa della professione di architetta, integrando però regolarmente attività fisica in palestra, mediamente 2-3 volte alla settimana.",
+      "notes": "",
       "created_at": "2026-06-25T00:01:00",
-      "birth_date": "16/06/1997",
+      "birth_date": "16-06-1997",
       "anamnesis": "",
       "goals": "Ricomposizione corporea"
     },
