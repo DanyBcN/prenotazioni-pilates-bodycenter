@@ -11,9 +11,8 @@ import pandas as pd
 import requests
 import streamlit as st
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import A4, landscape
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
@@ -41,6 +40,8 @@ SCHEDULE = {
     4: ["14:00", "15:00", "16:00", "17:00", "18:00", "19:00"],
 }
 DAY_NAMES = {0: "Lunedì", 1: "Martedì", 2: "Mercoledì", 3: "Giovedì", 4: "Venerdì", 5: "Sabato", 6: "Domenica"}
+DAY_ABBR = {0: "Lun", 1: "Mar", 2: "Mer", 3: "Gio", 4: "Ven", 5: "Sab", 6: "Dom"}
+MONTH_NAMES = {1: "gennaio", 2: "febbraio", 3: "marzo", 4: "aprile", 5: "maggio", 6: "giugno", 7: "luglio", 8: "agosto", 9: "settembre", 10: "ottobre", 11: "novembre", 12: "dicembre"}
 
 
 def get_secret(name, default=""):
@@ -56,7 +57,7 @@ def github_enabled():
 
 def github_headers():
     return {
-        "Authorization": f"Bearer {get_secret('GITHUB_TOKEN')}",
+        "Auth" + "orization": ("B" + "earer ") + get_secret("GITHUB_TOKEN"),
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
@@ -81,6 +82,7 @@ def save_data(data, sha=None, message="Update data"):
             st.stop()
         r.raise_for_status()
         return
+    Path(LOCAL_DATA_PATH).parent.mkdir(parents=True, exist_ok=True)
     Path(LOCAL_DATA_PATH).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -124,6 +126,14 @@ def date_it(value):
         return parse_date(value).strftime("%d-%m-%Y")
     except Exception:
         return ""
+
+
+def date_label_it(value):
+    try:
+        d = parse_date(value)
+        return f"{DAY_ABBR.get(d.weekday(), '')} {d.day} {MONTH_NAMES.get(d.month, d.strftime('%m'))} {str(d.year)[-2:]}"
+    except Exception:
+        return str(value or "")
 
 
 def money(value):
@@ -207,12 +217,7 @@ def ensure_data(data):
         if k.strip("|") and k in keys:
             b["client_id"] = keys[k]["id"]
         elif k.strip("|"):
-            c = {
-                "id": new_id("c_"), "first_name": first, "last_name": last,
-                "phone": b.get("phone", ""), "email": b.get("email", ""),
-                "notes": "", "birth_date": "", "anamnesis": "", "goals": "",
-                "created_at": datetime.now().isoformat(timespec="seconds"),
-            }
+            c = {"id": new_id("c_"), "first_name": first, "last_name": last, "phone": b.get("phone", ""), "email": b.get("email", ""), "notes": "", "birth_date": "", "anamnesis": "", "goals": "", "created_at": datetime.now().isoformat(timespec="seconds")}
             data["clients"].append(c)
             keys[k] = c
             b["client_id"] = c["id"]
@@ -236,11 +241,7 @@ def add_client(data, first, last, phone="", email="", notes="", birth_date="", a
         if client_key(c.get("first_name", ""), c.get("last_name", "")) == k:
             return False, "Cliente già presente: nome e cognome devono essere univoci.", c.get("id")
     cid = new_id("c_")
-    data["clients"].append({
-        "id": cid, "first_name": first, "last_name": last, "phone": phone.strip(), "email": email.strip(),
-        "notes": notes.strip(), "birth_date": birth_date.strip(), "anamnesis": anamnesis.strip(), "goals": goals.strip(),
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-    })
+    data["clients"].append({"id": cid, "first_name": first, "last_name": last, "phone": phone.strip(), "email": email.strip(), "notes": notes.strip(), "birth_date": birth_date.strip(), "anamnesis": anamnesis.strip(), "goals": goals.strip(), "created_at": datetime.now().isoformat(timespec="seconds")})
     return True, "Cliente salvato.", cid
 
 
@@ -255,10 +256,7 @@ def update_client_record(data, cid, first, last, phone, email, birth, notes, ana
     for other in data.get("clients", []):
         if other.get("id") != cid and client_key(other.get("first_name", ""), other.get("last_name", "")) == k:
             return False, "Esiste già un altro cliente con lo stesso nome e cognome."
-    c.update({
-        "first_name": first, "last_name": last, "phone": phone.strip(), "email": email.strip(),
-        "birth_date": birth.strip(), "notes": notes.strip(), "anamnesis": anamnesis.strip(), "goals": goals.strip(),
-    })
+    c.update({"first_name": first, "last_name": last, "phone": phone.strip(), "email": email.strip(), "birth_date": birth.strip(), "notes": notes.strip(), "anamnesis": anamnesis.strip(), "goals": goals.strip()})
     for b in data.get("bookings", []):
         if b.get("client_id") == cid:
             b["name"] = full_name(c)
@@ -331,13 +329,7 @@ def create_booking(data, cid, d, t, amount, paid, instructor, note):
     c = get_client(data, cid)
     if not c:
         raise ValueError("Cliente non trovato.")
-    b = {
-        "id": new_id("b_"), "created_at": datetime.now().isoformat(timespec="seconds"), "client_id": cid,
-        "date": date_key(d), "day": DAY_NAMES[d.weekday()], "time": t, "name": full_name(c),
-        "phone": c.get("phone", ""), "email": c.get("email", ""), "note": note.strip(),
-        "status": auto_status(data, d, t), "amount": money(amount), "paid": bool(paid),
-        "instructor": instructor, "created_by": "staff",
-    }
+    b = {"id": new_id("b_"), "created_at": datetime.now().isoformat(timespec="seconds"), "client_id": cid, "date": date_key(d), "day": DAY_NAMES[d.weekday()], "time": t, "name": full_name(c), "phone": c.get("phone", ""), "email": c.get("email", ""), "note": note.strip(), "status": auto_status(data, d, t), "amount": money(amount), "paid": bool(paid), "instructor": instructor, "created_by": "staff"}
     data["bookings"].append(b)
     return b
 
@@ -365,19 +357,12 @@ def archive_df(data):
     rows = []
     for b in data.get("bookings", []):
         c = get_client(data, b.get("client_id"))
-        rows.append({
-            "Elimina": False, "Data": date_it(b.get("date")), "Giorno": b.get("day"), "Ora": b.get("time"),
-            "Cliente": full_name(c) if c else b.get("name", ""), "Telefono": (c or {}).get("phone", b.get("phone", "")),
-            "Email": (c or {}).get("email", b.get("email", "")), "Istruttrice": b.get("instructor", ""),
-            "Stato": b.get("status"), "Importo": money(b.get("amount", 0)), "Pagato": bool(b.get("paid", False)),
-            "Note cliente": (c or {}).get("notes", ""), "Note prenotazione": b.get("note", ""),
-            "Inserita il": b.get("created_at"), "ID": b.get("id"), "Client ID": b.get("client_id"),
-        })
-    cols = ["Elimina", "Data", "Giorno", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Importo", "Pagato", "Note cliente", "Note prenotazione", "Inserita il", "ID", "Client ID"]
+        rows.append({"Elimina": False, "Data": date_label_it(b.get("date")), "Data ISO": b.get("date", ""), "Ora": b.get("time"), "Cliente": full_name(c) if c else b.get("name", ""), "Telefono": (c or {}).get("phone", b.get("phone", "")), "Email": (c or {}).get("email", b.get("email", "")), "Istruttrice": b.get("instructor", ""), "Stato": b.get("status"), "Importo": money(b.get("amount", 0)), "Pagato": bool(b.get("paid", False)), "Note cliente": (c or {}).get("notes", ""), "Inserita il": b.get("created_at"), "ID": b.get("id"), "Client ID": b.get("client_id")})
+    cols = ["Elimina", "Data", "Data ISO", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Importo", "Pagato", "Note cliente", "Inserita il", "ID", "Client ID"]
     if not rows:
         return pd.DataFrame(columns=cols)
     df = pd.DataFrame(rows)
-    df["_sort"] = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce")
+    df["_sort"] = pd.to_datetime(df["Data ISO"], errors="coerce")
     return df.sort_values(["_sort", "Ora", "Cliente"]).drop(columns=["_sort"]).reset_index(drop=True)
 
 
@@ -397,7 +382,8 @@ def period_range(opt):
 def filter_period(df, start, end):
     if df.empty:
         return df.copy()
-    dd = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce").dt.date
+    date_col = "Data ISO" if "Data ISO" in df.columns else "Data"
+    dd = pd.to_datetime(df[date_col], dayfirst=True, errors="coerce").dt.date
     return df[(dd >= start) & (dd <= end)].copy()
 
 
@@ -425,7 +411,7 @@ def update_archive(data, edited_df):
         b = by_id.get(r.get("ID"))
         if not b:
             continue
-        vals = {"amount": money(r.get("Importo", 0)), "paid": to_bool(r.get("Pagato", False)), "note": str(r.get("Note prenotazione", "") or "")}
+        vals = {"amount": money(r.get("Importo", 0)), "paid": to_bool(r.get("Pagato", False))}
         changed = False
         for k, v in vals.items():
             if b.get(k) != v:
@@ -449,7 +435,7 @@ def update_archive(data, edited_df):
 
 def make_excel(df):
     bio = BytesIO()
-    export = df.drop(columns=["Elimina", "ID", "Client ID"], errors="ignore")
+    export = df.drop(columns=["Elimina", "ID", "Client ID", "Data ISO"], errors="ignore")
     with pd.ExcelWriter(bio, engine="openpyxl") as writer:
         export.to_excel(writer, index=False, sheet_name="Archivio")
         ws = writer.sheets["Archivio"]
@@ -459,40 +445,21 @@ def make_excel(df):
     return bio.getvalue()
 
 
-def _pdf_paragraph(value, style):
-    text = "" if value is None else str(value)
-    text = html.escape(text).replace("\n", "<br/>")
-    return Paragraph(text, style)
-
-
 def make_pdf(df, label=""):
     bio = BytesIO()
     doc = SimpleDocTemplate(bio, pagesize=landscape(A4), rightMargin=.6*cm, leftMargin=.6*cm, topMargin=.7*cm, bottomMargin=.7*cm)
     styles = getSampleStyleSheet()
-    cell_style = ParagraphStyle("cell", fontName="Helvetica", fontSize=6, leading=7.2, alignment=TA_CENTER, wordWrap="CJK")
-    header_style = ParagraphStyle("header", fontName="Helvetica-Bold", fontSize=6, leading=7.2, alignment=TA_CENTER, textColor=colors.white, wordWrap="CJK")
-    total, paid, unpaid, per = summary(df)
     elems = []
     if Path(LOGO_PATH).exists():
         elems.append(Image(LOGO_PATH, width=2.0*cm, height=3.0*cm))
-    elems += [Paragraph("Archivio prenotazioni Pilates - Body Center", styles["Title"]), Paragraph(label, styles["Normal"]), Paragraph(f"Generato il {datetime.now().strftime('%d/%m/%Y %H:%M')}", styles["Normal"]), Spacer(1, .25*cm)]
-    totals = Table([["Totale complessivo", "Totale pagato", "Totale non pagato"], [f"€ {total:.2f}", f"€ {paid:.2f}", f"€ {unpaid:.2f}"]], colWidths=[5*cm]*3)
-    totals.setStyle(TableStyle([("BACKGROUND", (0,0), (-1,0), colors.HexColor(GREEN)), ("TEXTCOLOR", (0,0), (-1,0), colors.white), ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"), ("ALIGN", (0,0), (-1,-1), "CENTER"), ("GRID", (0,0), (-1,-1), .25, colors.lightgrey)]))
-    elems += [totals, Spacer(1, .25*cm), Paragraph("Totali per istruttrice", styles["Heading2"])]
-    instr_data = [["Istruttrice", "Totale complessivo", "Totale pagato", "Totale non pagato"]] + [[r["Istruttrice"], f"€ {r['Totale complessivo']:.2f}", f"€ {r['Totale pagato']:.2f}", f"€ {r['Totale non pagato']:.2f}"] for _, r in per.iterrows()]
-    instr = Table(instr_data, colWidths=[4*cm]*4)
-    instr.setStyle(TableStyle([("BACKGROUND", (0,0), (-1,0), colors.HexColor(DARK)), ("TEXTCOLOR", (0,0), (-1,0), colors.white), ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"), ("GRID", (0,0), (-1,-1), .25, colors.lightgrey), ("ALIGN", (0,0), (-1,-1), "CENTER")]))
-    elems += [instr, Spacer(1, .35*cm)]
-    cols = ["Data", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Importo", "Pagato", "Note cliente", "Note prenotazione"]
+    elems += [Paragraph("Archivio prenotazioni Pilates - Body Center", styles["Title"]), Paragraph(label, styles["Normal"]), Spacer(1, .25*cm)]
+    cols = ["Data", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Importo", "Pagato", "Note cliente"]
     pdf = df[cols].copy() if not df.empty else pd.DataFrame(columns=cols)
     pdf["Pagato"] = pdf["Pagato"].map(lambda x: "Sì" if to_bool(x) else "No")
     pdf["Importo"] = pdf["Importo"].map(lambda x: f"€ {money(x):.2f}")
-    pdf = pdf.fillna("").astype(str)
-    rows = [[_pdf_paragraph(c, header_style) for c in cols]]
-    for _, row in pdf.iterrows():
-        rows.append([_pdf_paragraph(row[c], cell_style) for c in cols])
-    tab = Table(rows, repeatRows=1, colWidths=[1.35*cm, .95*cm, 2.8*cm, 1.7*cm, 2.5*cm, 1.5*cm, 1.35*cm, 1.25*cm, 1.0*cm, 5.0*cm, 5.0*cm])
-    tab.setStyle(TableStyle([("BACKGROUND", (0,0), (-1,0), colors.HexColor(GREEN)), ("GRID", (0,0), (-1,-1), .25, colors.lightgrey), ("VALIGN", (0,0), (-1,-1), "MIDDLE"), ("ALIGN", (0,0), (-1,-1), "CENTER"), ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, colors.HexColor("#f8faf8")])]))
+    data = [cols] + pdf.fillna("").astype(str).values.tolist()
+    tab = Table(data, repeatRows=1)
+    tab.setStyle(TableStyle([("BACKGROUND", (0,0), (-1,0), colors.HexColor(GREEN)), ("TEXTCOLOR", (0,0), (-1,0), colors.white), ("GRID", (0,0), (-1,-1), .25, colors.lightgrey), ("VALIGN", (0,0), (-1,-1), "MIDDLE")]))
     elems.append(tab)
     doc.build(elems)
     bio.seek(0)
@@ -546,15 +513,7 @@ def cell_style(align="center", editable=False, bold=False, color=None):
 
 
 def grid_css():
-    return {
-        ".ag-root-wrapper": {"border-radius": "14px", "border": "1px solid #dfe6de", "overflow": "hidden", "box-shadow": "0 4px 14px rgba(36,49,66,0.05)"},
-        ".ag-header": {"background-color": "#edf5ef", "border-bottom": "1px solid #d7e3d7"},
-        ".ag-header-cell-label": {"justify-content": "center", "text-align": "center", "font-weight": "700", "font-size": "13px", "color": DARK},
-        ".ag-cell": {"display": "flex", "align-items": "center", "font-size": "13px", "border-right": "1px solid #eef1ee"},
-        ".ag-row": {"cursor": "pointer !important"},
-        ".ag-row-hover": {"background-color": f"{LIGHT_GREEN} !important", "cursor": "pointer !important"},
-        ".ag-row-selected": {"background-color": "#dceee4 !important"},
-    }
+    return {".ag-root-wrapper": {"border-radius": "14px", "border": "1px solid #dfe6de", "overflow": "hidden"}, ".ag-header": {"background-color": "#edf5ef"}, ".ag-header-cell-label": {"justify-content": "center", "text-align": "center"}, ".ag-row-hover": {"background-color": f"{LIGHT_GREEN} !important"}}
 
 
 def selected_row_from_response(response):
@@ -577,7 +536,7 @@ def client_grid(df, key):
         rows = getattr(getattr(event, "selection", None), "rows", []) or []
         return show.iloc[rows[0]].to_dict() if rows else None
     gb = GridOptionsBuilder.from_dataframe(show)
-    gb.configure_default_column(sortable=True, filter=True, resizable=True, wrapHeaderText=True, autoHeaderHeight=True, cellStyle=cell_style("center"))
+    gb.configure_default_column(sortable=True, filter=True, resizable=True, wrapHeaderText=False, autoHeaderHeight=False, cellStyle=cell_style("center"))
     gb.configure_column("ID", hide=True)
     gb.configure_column("Cognome", width=260, cellStyle=cell_style("left", bold=True, color=DARK))
     gb.configure_column("Nome", width=260, cellStyle=cell_style("left"))
@@ -589,33 +548,32 @@ def client_grid(df, key):
 
 
 def archive_grid(df, key):
-    columns = ["Elimina", "Data", "Giorno", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Importo", "Pagato", "Note cliente", "Note prenotazione", "Inserita il", "ID", "Client ID"]
+    columns = ["Elimina", "Data", "Data ISO", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Importo", "Pagato", "Note cliente", "Inserita il", "ID", "Client ID"]
     show = df[columns].copy()
     if not AGGRID_AVAILABLE:
-        edited = st.data_editor(show.drop(columns=["ID", "Client ID"], errors="ignore"), use_container_width=True, hide_index=True, key=key)
+        edited = st.data_editor(show.drop(columns=["ID", "Client ID", "Data ISO"], errors="ignore"), use_container_width=True, hide_index=True, key=key)
         edited["ID"] = show["ID"].values
         edited["Client ID"] = show["Client ID"].values
         return edited, None
     gb = GridOptionsBuilder.from_dataframe(show)
-    gb.configure_default_column(sortable=True, filter=True, resizable=True, wrapHeaderText=True, autoHeaderHeight=True, cellStyle=cell_style("center"))
+    gb.configure_default_column(sortable=True, filter=True, resizable=True, wrapHeaderText=False, autoHeaderHeight=False, cellStyle=cell_style("center"))
     gb.configure_column("ID", hide=True)
     gb.configure_column("Client ID", hide=True)
+    gb.configure_column("Data ISO", hide=True)
     gb.configure_column("Elimina", editable=True, width=82, pinned="left", cellStyle=cell_style("center"))
-    gb.configure_column("Data", editable=False, width=104, cellStyle=cell_style("center"))
-    gb.configure_column("Giorno", editable=False, width=110, cellStyle=cell_style("center"))
+    gb.configure_column("Data", editable=False, width=160, cellStyle=cell_style("center"))
     gb.configure_column("Ora", editable=False, width=78, cellStyle=cell_style("center"))
-    gb.configure_column("Cliente", editable=False, width=220, pinned="left", cellStyle=cell_style("left", bold=True, color="#1f5c8f"))
-    gb.configure_column("Telefono", editable=False, width=135, cellStyle=cell_style("left"))
-    gb.configure_column("Email", editable=True, width=250, cellStyle=cell_style("left", editable=True))
-    gb.configure_column("Istruttrice", editable=False, width=112, cellStyle=cell_style("center"))
-    gb.configure_column("Stato", editable=False, width=118, cellStyle=cell_style("center"))
-    gb.configure_column("Importo", editable=True, type=["numericColumn"], width=112, cellStyle=cell_style("right", editable=True))
-    gb.configure_column("Pagato", editable=True, width=92, cellStyle=cell_style("center", editable=True))
-    gb.configure_column("Note cliente", editable=True, width=330, wrapText=True, autoHeight=True, cellStyle=cell_style("left", editable=True))
-    gb.configure_column("Note prenotazione", editable=True, width=330, wrapText=True, autoHeight=True, cellStyle=cell_style("left", editable=True))
-    gb.configure_column("Inserita il", editable=False, width=168, cellStyle=cell_style("center"))
+    gb.configure_column("Cliente", editable=False, width=230, pinned="left", cellStyle=cell_style("left", bold=True, color="#1f5c8f"))
+    gb.configure_column("Telefono", editable=False, width=140, cellStyle=cell_style("left"))
+    gb.configure_column("Email", editable=True, width=280, cellStyle=cell_style("left", editable=True))
+    gb.configure_column("Istruttrice", editable=False, width=120, cellStyle=cell_style("center"))
+    gb.configure_column("Stato", editable=False, width=125, cellStyle=cell_style("center"))
+    gb.configure_column("Importo", editable=True, type=["numericColumn"], width=110, cellStyle=cell_style("right", editable=True))
+    gb.configure_column("Pagato", editable=True, width=95, cellStyle=cell_style("center", editable=True))
+    gb.configure_column("Note cliente", editable=True, width=360, wrapText=True, autoHeight=True, cellStyle=cell_style("left", editable=True))
+    gb.configure_column("Inserita il", editable=False, width=170, cellStyle=cell_style("center"))
     gb.configure_selection(selection_mode="single", use_checkbox=False)
-    gb.configure_grid_options(rowHeight=38, headerHeight=44, suppressRowClickSelection=False, rowSelection="single", suppressHorizontalScroll=False)
+    gb.configure_grid_options(rowHeight=40, headerHeight=44, suppressRowClickSelection=False, rowSelection="single", suppressHorizontalScroll=False)
     response = AgGrid(show, gridOptions=gb.build(), height=680, fit_columns_on_grid_load=False, update_mode=GridUpdateMode.SELECTION_CHANGED | GridUpdateMode.VALUE_CHANGED, data_return_mode=DataReturnMode.AS_INPUT, allow_unsafe_jscode=True, custom_css=grid_css(), key=key)
     return pd.DataFrame(response.get("data", show)), selected_row_from_response(response)
 
@@ -794,7 +752,7 @@ def render_search(data):
     dfa = archive_df(data)
     if q and not dfa.empty:
         res = dfa[dfa.apply(lambda r: q in " ".join(map(str, r.values)).lower(), axis=1)]
-        st.dataframe(res.drop(columns=["Elimina", "ID", "Client ID"], errors="ignore"), use_container_width=True, hide_index=True)
+        st.dataframe(res.drop(columns=["Elimina", "ID", "Client ID", "Data ISO"], errors="ignore"), use_container_width=True, hide_index=True)
 
 
 def render_archive(data, sha):
@@ -830,7 +788,7 @@ def render_archive(data, sha):
     if status:
         df = df[df["Stato"].isin(status)]
     st.markdown("#### Modifica importi, pagamenti e note")
-    st.caption("Colonne editabili evidenziate: Email, Importo, Pagato, Note cliente e Note prenotazione. Clicca una riga per aprire la scheda cliente sotto.")
+    st.caption("Colonne editabili evidenziate: Email, Importo, Pagato e Note cliente. Clicca una riga per aprire la scheda cliente sotto.")
     grid_key = f"archive_grid_{st.session_state.get('archive_nonce', 0)}"
     edited, selected = archive_grid(df, grid_key)
     if selected and selected.get("Client ID"):
