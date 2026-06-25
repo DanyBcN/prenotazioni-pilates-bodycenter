@@ -228,6 +228,18 @@
       "anamnesis": "",
       "goals": "",
       "created_at": "2026-06-25T08:18:55"
+    },
+    {
+      "id": "c_20260625083543915853",
+      "first_name": "Diego",
+      "last_name": "Scala",
+      "phone": "+393494308920",
+      "email": "diegoscala@hotmail.it",
+      "notes": "Problema Addome",
+      "birth_date": "27/10/2025",
+      "anamnesis": "",
+      "goals": "",
+      "created_at": "2026-06-25T08:35:43"
     }
   ]
 }
