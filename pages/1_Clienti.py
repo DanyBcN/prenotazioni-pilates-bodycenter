@@ -1,9 +1,11 @@
 import base64
+import html
 import json
 import os
 import re
 from datetime import date, datetime
 from pathlib import Path
+from urllib.parse import quote
 
 import pandas as pd
 import requests
@@ -123,6 +125,8 @@ def ensure_clients(data):
         c.setdefault("notes", "")
         c.setdefault("anamnesis", "")
         c.setdefault("goals", "")
+        c.setdefault("phone", "")
+        c.setdefault("email", "")
     return data
 
 
@@ -179,12 +183,40 @@ def update_client(data, cid, first, last, phone, email, birth, notes, anamnesis,
     return True, "Scheda cliente aggiornata."
 
 
+def render_clickable_table(df):
+    rows = []
+    for _, r in df.iterrows():
+        cid = quote(str(r["ID"]))
+        cognome = html.escape(str(r["Cognome"]))
+        nome = html.escape(str(r["Nome"]))
+        ultima = html.escape(str(r["Ultima lezione"]))
+        rows.append(
+            f"<tr>"
+            f"<td><a href='?client_id={cid}' style='font-weight:700;color:#1f5c8f;text-decoration:none'>{cognome}</a></td>"
+            f"<td>{nome}</td>"
+            f"<td>{ultima}</td>"
+            f"</tr>"
+        )
+    table = """
+    <style>
+    .client-table {width:100%; border-collapse:collapse; font-size:15px;}
+    .client-table th {text-align:left; background:#f4f6f8; padding:10px; border:1px solid #e1e4e8;}
+    .client-table td {padding:10px; border:1px solid #e1e4e8;}
+    .client-table tr:hover {background:#eef6f2;}
+    </style>
+    <table class='client-table'>
+      <thead><tr><th>Cognome</th><th>Nome</th><th>Ultima lezione</th></tr></thead>
+      <tbody>
+    """ + "\n".join(rows) + "</tbody></table>"
+    st.markdown(table, unsafe_allow_html=True)
+
+
 st.set_page_config(page_title="Archivio clienti", page_icon="👤", layout="wide")
 
 if Path(LOGO_PATH).exists():
     st.image(LOGO_PATH, width=110)
 st.title("Archivio clienti")
-st.caption("Clicca una riga della tabella per aprire la scheda cliente.")
+st.caption("Clicca direttamente sul cognome per aprire la scheda cliente.")
 
 pwd = st.sidebar.text_input("Password", type="password")
 if pwd != get_secret("APP_PASSWORD", "pilates123"):
@@ -208,27 +240,14 @@ if df.empty:
     st.info("Nessun cliente presente.")
     st.stop()
 
-event = st.dataframe(
-    df[["Cognome", "Nome", "Ultima lezione"]],
-    use_container_width=True,
-    hide_index=True,
-    on_select="rerun",
-    selection_mode="single-row",
-    key="client_click_table_page",
-)
+render_clickable_table(df)
 
-selected_rows = []
-try:
-    selected_rows = event.selection.rows
-except Exception:
-    selected_rows = []
-
-if not selected_rows:
-    st.info("Seleziona un cliente dalla tabella.")
+selected_id = st.query_params.get("client_id", "")
+if not selected_id:
+    st.info("Clicca un cognome nella tabella per aprire la scheda.")
     st.stop()
 
-cid = df.iloc[selected_rows[0]]["ID"]
-c = get_client(data, cid)
+c = get_client(data, selected_id)
 if not c:
     st.error("Cliente non trovato.")
     st.stop()
@@ -247,7 +266,7 @@ anamnesis = st.text_area("Anamnesi / problematiche", value=c.get("anamnesis", ""
 goals = st.text_area("Obiettivi", value=c.get("goals", ""), height=100)
 
 if st.button("Salva scheda cliente", type="primary"):
-    ok, msg = update_client(data, cid, first, last, phone, email, birth, notes, anamnesis, goals)
+    ok, msg = update_client(data, selected_id, first, last, phone, email, birth, notes, anamnesis, goals)
     if ok:
         save_data(data, sha)
         st.success(msg)
@@ -257,7 +276,7 @@ if st.button("Salva scheda cliente", type="primary"):
 
 history = []
 for bkg in data.get("bookings", []):
-    if bkg.get("client_id") == cid:
+    if bkg.get("client_id") == selected_id:
         history.append({
             "Data": date_it(bkg.get("date")),
             "Ora": bkg.get("time", ""),
