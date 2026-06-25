@@ -11,7 +11,6 @@ def status_icon(status):
 
 builtins.status_icon = status_icon
 
-
 # --- PDF: force long text/note cells to wrap inside table cells ---
 try:
     import reportlab.platypus as _platypus
@@ -63,8 +62,6 @@ try:
 except Exception:
     pass
 
-
-# --- Streamlit: move password/login controls from sidebar to main page ---
 POINTER_TABLE_CSS = """
 <style>
 div[data-testid="stDataFrame"] canvas,
@@ -100,6 +97,33 @@ try:
     import streamlit as st
 
     _original_dataframe = st.dataframe
+    _original_rerun = st.rerun
+
+    def _bump_grid_nonce():
+        st.session_state["_grid_refresh_nonce"] = int(st.session_state.get("_grid_refresh_nonce", 0)) + 1
+
+    def rerun_with_grid_refresh(*args, **kwargs):
+        _bump_grid_nonce()
+        return _original_rerun(*args, **kwargs)
+
+    st.rerun = rerun_with_grid_refresh
+
+    # Patch AgGrid so a programmatic st.rerun after delete/save rebuilds the table component.
+    try:
+        import st_aggrid as _st_aggrid
+
+        _OriginalAgGrid = _st_aggrid.AgGrid
+
+        def AgGrid_with_refresh(*args, **kwargs):
+            key = kwargs.get("key")
+            if key in {"archive_grid", "client_grid"}:
+                nonce = st.session_state.get("_grid_refresh_nonce", 0)
+                kwargs["key"] = f"{key}_{nonce}"
+            return _OriginalAgGrid(*args, **kwargs)
+
+        _st_aggrid.AgGrid = AgGrid_with_refresh
+    except Exception:
+        pass
 
     class _MainLoginProxy:
         def header(self, *args, **kwargs):
@@ -110,7 +134,6 @@ try:
             return st.text_input(*args, **kwargs)
 
         def success(self, *args, **kwargs):
-            # Do not show a persistent login message that occupies layout space.
             return None
 
         def error(self, *args, **kwargs):
