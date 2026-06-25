@@ -1,4 +1,5 @@
 import builtins
+import html
 from types import SimpleNamespace
 
 builtins.APP_TITLE = "Prenotazioni Pilates Reformer"
@@ -11,6 +12,59 @@ def status_icon(status):
 builtins.status_icon = status_icon
 
 
+# --- PDF: force long text/note cells to wrap inside table cells ---
+try:
+    import reportlab.platypus as _platypus
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.platypus import Paragraph
+
+    _OriginalTable = _platypus.Table
+    _pdf_body_style = ParagraphStyle(
+        "BodyCenterWrapped",
+        fontName="Helvetica",
+        fontSize=6,
+        leading=7.5,
+        alignment=TA_CENTER,
+        textColor=colors.black,
+        wordWrap="CJK",
+    )
+    _pdf_header_style = ParagraphStyle(
+        "HeaderCenterWrapped",
+        fontName="Helvetica-Bold",
+        fontSize=6,
+        leading=7.5,
+        alignment=TA_CENTER,
+        textColor=colors.white,
+        wordWrap="CJK",
+    )
+
+    def _wrap_pdf_cell(value, is_header=False):
+        if value is None:
+            value = ""
+        if isinstance(value, str):
+            text = html.escape(value).replace("\n", "<br/>")
+            return Paragraph(text, _pdf_header_style if is_header else _pdf_body_style)
+        return value
+
+    def WrappingTable(data, *args, **kwargs):
+        if isinstance(data, (list, tuple)):
+            wrapped = []
+            for row_idx, row in enumerate(data):
+                if isinstance(row, (list, tuple)):
+                    wrapped.append([_wrap_pdf_cell(cell, row_idx == 0) for cell in row])
+                else:
+                    wrapped.append(row)
+            data = wrapped
+        return _OriginalTable(data, *args, **kwargs)
+
+    _platypus.Table = WrappingTable
+except Exception:
+    pass
+
+
+# --- Streamlit: move password/login controls from sidebar to main page ---
 POINTER_TABLE_CSS = """
 <style>
 div[data-testid="stDataFrame"] canvas,
@@ -21,6 +75,15 @@ div[data-testid="stDataFrame"] [role="gridcell"] {
 }
 div[data-testid="stDataFrame"]:hover {
     cursor: pointer !important;
+}
+.login-card {
+    max-width: 460px;
+    padding: 22px 24px;
+    border: 1px solid #e2e8e0;
+    border-radius: 16px;
+    background: #ffffff;
+    box-shadow: 0 8px 24px rgba(36, 49, 66, 0.06);
+    margin-top: 20px;
 }
 </style>
 """
@@ -37,6 +100,26 @@ try:
     import streamlit as st
 
     _original_dataframe = st.dataframe
+
+    class _MainLoginProxy:
+        def header(self, *args, **kwargs):
+            st.markdown("<div class='login-card'>", unsafe_allow_html=True)
+            return st.markdown("### Accesso staff")
+
+        def text_input(self, *args, **kwargs):
+            return st.text_input(*args, **kwargs)
+
+        def success(self, *args, **kwargs):
+            # Do not show a persistent login message that occupies layout space.
+            return None
+
+        def error(self, *args, **kwargs):
+            return st.error(*args, **kwargs)
+
+        def __getattr__(self, name):
+            return getattr(st, name)
+
+    st.sidebar = _MainLoginProxy()
 
     def _empty_selection_event():
         return SimpleNamespace(selection=SimpleNamespace(rows=[]))
