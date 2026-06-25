@@ -37,6 +37,9 @@ def _patch_app_source():
     text = text.replace('    gb.configure_column("Inserita il", editable=False, width=170, cellStyle=cell_style("center"))\n', '')
     text = text.replace('    gb.configure_column("Inserita il", editable=False, width=168, cellStyle=cell_style("center"))\n', '')
 
+    # Sort archive rows alphabetically by client surname/name, then date and time.
+    text = text.replace('return df.sort_values(["_sort", "Ora", "Cliente"]).drop(columns=["_sort"]).reset_index(drop=True)', 'return df.sort_values(["Cliente", "_sort", "Ora"]).drop(columns=["_sort"]).reset_index(drop=True)')
+
     if text != original:
         path.write_text(text, encoding="utf-8")
 
