@@ -505,11 +505,13 @@ def app_css():
     [data-testid="stSidebar"], [data-testid="collapsedControl"] {{ display: none !important; }}
     .stApp {{ background: #fbfcfb; }}
     div[data-testid="stMetric"] {{ background:#fff; border:1px solid #e6e9e6; border-radius:14px; padding:12px; }}
-    .ag-theme-streamlit, .ag-theme-balham {{ --ag-row-hover-color: {LIGHT_GREEN}; --ag-selected-row-background-color: #dceee4; }}
-    .ag-row, .ag-cell {{ cursor: pointer !important; text-align:center !important; justify-content:center !important; align-items:center !important; }}
-    .ag-cell-wrapper {{ justify-content:center !important; }}
-    .ag-header-cell-label {{ justify-content:center !important; font-weight: 700; text-align:center !important; }}
-    .ag-header-cell-text {{ margin:auto; }}
+    .ag-root-wrapper {{ border-radius:14px !important; border:1px solid #dfe6de !important; overflow:hidden !important; box-shadow:0 4px 14px rgba(36,49,66,0.05) !important; }}
+    .ag-header {{ background-color:#edf5ef !important; border-bottom:1px solid #d7e3d7 !important; }}
+    .ag-header-cell-label {{ justify-content:center !important; text-align:center !important; font-weight:700 !important; font-size:13px !important; color:{DARK} !important; }}
+    .ag-cell {{ display:flex !important; align-items:center !important; font-size:13px !important; border-right:1px solid #eef1ee !important; }}
+    .ag-row {{ cursor:pointer !important; }}
+    .ag-row-hover {{ background-color:{LIGHT_GREEN} !important; cursor:pointer !important; }}
+    .ag-row-selected {{ background-color:#dceee4 !important; }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -529,6 +531,30 @@ def login():
             else:
                 st.error("Password non corretta")
     return False
+
+
+def cell_style(align="center", editable=False, bold=False, color=None):
+    justify = {"left": "flex-start", "right": "flex-end", "center": "center"}.get(align, "center")
+    out = {"display": "flex", "alignItems": "center", "justifyContent": justify, "textAlign": align, "fontSize": "13px", "paddingLeft": "10px", "paddingRight": "10px", "lineHeight": "1.25"}
+    if editable:
+        out["backgroundColor"] = "#fffdf0"
+    if bold:
+        out["fontWeight"] = "700"
+    if color:
+        out["color"] = color
+    return out
+
+
+def grid_css():
+    return {
+        ".ag-root-wrapper": {"border-radius": "14px", "border": "1px solid #dfe6de", "overflow": "hidden", "box-shadow": "0 4px 14px rgba(36,49,66,0.05)"},
+        ".ag-header": {"background-color": "#edf5ef", "border-bottom": "1px solid #d7e3d7"},
+        ".ag-header-cell-label": {"justify-content": "center", "text-align": "center", "font-weight": "700", "font-size": "13px", "color": DARK},
+        ".ag-cell": {"display": "flex", "align-items": "center", "font-size": "13px", "border-right": "1px solid #eef1ee"},
+        ".ag-row": {"cursor": "pointer !important"},
+        ".ag-row-hover": {"background-color": f"{LIGHT_GREEN} !important", "cursor": "pointer !important"},
+        ".ag-row-selected": {"background-color": "#dceee4 !important"},
+    }
 
 
 def selected_row_from_response(response):
@@ -551,11 +577,14 @@ def client_grid(df, key):
         rows = getattr(getattr(event, "selection", None), "rows", []) or []
         return show.iloc[rows[0]].to_dict() if rows else None
     gb = GridOptionsBuilder.from_dataframe(show)
+    gb.configure_default_column(sortable=True, filter=True, resizable=True, wrapHeaderText=True, autoHeaderHeight=True, cellStyle=cell_style("center"))
     gb.configure_column("ID", hide=True)
-    gb.configure_default_column(sortable=True, filter=True, resizable=True, cellStyle={"textAlign": "center"})
+    gb.configure_column("Cognome", width=260, cellStyle=cell_style("left", bold=True, color=DARK))
+    gb.configure_column("Nome", width=260, cellStyle=cell_style("left"))
+    gb.configure_column("Ultima lezione", width=160, cellStyle=cell_style("center"))
     gb.configure_selection(selection_mode="single", use_checkbox=False)
-    gb.configure_grid_options(rowHeight=42, suppressRowClickSelection=False, rowSelection="single")
-    response = AgGrid(show, gridOptions=gb.build(), height=min(480, 80 + 43 * max(len(show), 3)), fit_columns_on_grid_load=True, update_mode=GridUpdateMode.SELECTION_CHANGED, data_return_mode=DataReturnMode.FILTERED_AND_SORTED, allow_unsafe_jscode=True, custom_css={".ag-row": {"cursor": "pointer !important"}, ".ag-row-hover": {"background-color": f"{LIGHT_GREEN} !important"}, ".ag-cell": {"display": "flex", "align-items": "center", "justify-content": "center", "text-align": "center"}, ".ag-header-cell-label": {"justify-content": "center", "text-align": "center"}}, key=key)
+    gb.configure_grid_options(rowHeight=40, headerHeight=44, suppressRowClickSelection=False, rowSelection="single", suppressHorizontalScroll=False)
+    response = AgGrid(show, gridOptions=gb.build(), height=460, fit_columns_on_grid_load=False, update_mode=GridUpdateMode.SELECTION_CHANGED, data_return_mode=DataReturnMode.FILTERED_AND_SORTED, allow_unsafe_jscode=True, custom_css=grid_css(), key=key)
     return selected_row_from_response(response)
 
 
@@ -568,26 +597,26 @@ def archive_grid(df, key):
         edited["Client ID"] = show["Client ID"].values
         return edited, None
     gb = GridOptionsBuilder.from_dataframe(show)
-    gb.configure_default_column(sortable=True, filter=True, resizable=True, cellStyle={"textAlign": "center"})
+    gb.configure_default_column(sortable=True, filter=True, resizable=True, wrapHeaderText=True, autoHeaderHeight=True, cellStyle=cell_style("center"))
     gb.configure_column("ID", hide=True)
     gb.configure_column("Client ID", hide=True)
-    gb.configure_column("Elimina", editable=True, width=95, pinned="left", cellStyle={"textAlign": "center"})
-    gb.configure_column("Data", editable=False, width=115)
-    gb.configure_column("Giorno", editable=False, width=120)
-    gb.configure_column("Ora", editable=False, width=90)
-    gb.configure_column("Cliente", editable=False, minWidth=190, cellStyle={"fontWeight": "600", "color": "#1f5c8f", "cursor": "pointer", "textAlign": "center"})
-    gb.configure_column("Telefono", editable=False, width=140)
-    gb.configure_column("Email", editable=True, minWidth=210, cellStyle={"backgroundColor": "#fffdf0", "textAlign": "center"})
-    gb.configure_column("Istruttrice", editable=False, width=120)
-    gb.configure_column("Stato", editable=False, width=130)
-    gb.configure_column("Importo", editable=True, type=["numericColumn"], width=115, cellStyle={"backgroundColor": "#fffdf0", "textAlign": "center"})
-    gb.configure_column("Pagato", editable=True, width=105, cellStyle={"backgroundColor": "#fffdf0", "textAlign": "center"})
-    gb.configure_column("Note cliente", editable=True, minWidth=240, wrapText=True, autoHeight=True, cellStyle={"backgroundColor": "#fffdf0", "textAlign": "center"})
-    gb.configure_column("Note prenotazione", editable=True, minWidth=240, wrapText=True, autoHeight=True, cellStyle={"backgroundColor": "#fffdf0", "textAlign": "center"})
-    gb.configure_column("Inserita il", editable=False, width=170)
+    gb.configure_column("Elimina", editable=True, width=82, pinned="left", cellStyle=cell_style("center"))
+    gb.configure_column("Data", editable=False, width=104, cellStyle=cell_style("center"))
+    gb.configure_column("Giorno", editable=False, width=110, cellStyle=cell_style("center"))
+    gb.configure_column("Ora", editable=False, width=78, cellStyle=cell_style("center"))
+    gb.configure_column("Cliente", editable=False, width=220, pinned="left", cellStyle=cell_style("left", bold=True, color="#1f5c8f"))
+    gb.configure_column("Telefono", editable=False, width=135, cellStyle=cell_style("left"))
+    gb.configure_column("Email", editable=True, width=250, cellStyle=cell_style("left", editable=True))
+    gb.configure_column("Istruttrice", editable=False, width=112, cellStyle=cell_style("center"))
+    gb.configure_column("Stato", editable=False, width=118, cellStyle=cell_style("center"))
+    gb.configure_column("Importo", editable=True, type=["numericColumn"], width=112, cellStyle=cell_style("right", editable=True))
+    gb.configure_column("Pagato", editable=True, width=92, cellStyle=cell_style("center", editable=True))
+    gb.configure_column("Note cliente", editable=True, width=330, wrapText=True, autoHeight=True, cellStyle=cell_style("left", editable=True))
+    gb.configure_column("Note prenotazione", editable=True, width=330, wrapText=True, autoHeight=True, cellStyle=cell_style("left", editable=True))
+    gb.configure_column("Inserita il", editable=False, width=168, cellStyle=cell_style("center"))
     gb.configure_selection(selection_mode="single", use_checkbox=False)
-    gb.configure_grid_options(rowHeight=44, suppressRowClickSelection=False, rowSelection="single")
-    response = AgGrid(show, gridOptions=gb.build(), height=540, fit_columns_on_grid_load=False, update_mode=GridUpdateMode.SELECTION_CHANGED | GridUpdateMode.VALUE_CHANGED, data_return_mode=DataReturnMode.AS_INPUT, allow_unsafe_jscode=True, custom_css={".ag-row": {"cursor": "pointer !important"}, ".ag-row-hover": {"background-color": f"{LIGHT_GREEN} !important"}, ".ag-cell": {"display": "flex", "align-items": "center", "justify-content": "center", "text-align": "center"}, ".ag-header-cell-label": {"justify-content": "center", "text-align": "center"}}, key=key)
+    gb.configure_grid_options(rowHeight=38, headerHeight=44, suppressRowClickSelection=False, rowSelection="single", suppressHorizontalScroll=False)
+    response = AgGrid(show, gridOptions=gb.build(), height=680, fit_columns_on_grid_load=False, update_mode=GridUpdateMode.SELECTION_CHANGED | GridUpdateMode.VALUE_CHANGED, data_return_mode=DataReturnMode.AS_INPUT, allow_unsafe_jscode=True, custom_css=grid_css(), key=key)
     return pd.DataFrame(response.get("data", show)), selected_row_from_response(response)
 
 
