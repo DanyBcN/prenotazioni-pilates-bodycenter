@@ -39,7 +39,7 @@
       "date": "2026-07-01",
       "day": "Mercoledì",
       "time": "17:30",
-      "name": "Elisa Grosso",
+      "name": "Grosso Elisa",
       "phone": "3482768714",
       "note": "verificare orario",
       "status": "Confermata",
@@ -47,7 +47,8 @@
       "paid": false,
       "instructor": "Grazia",
       "created_by": "staff",
-      "client_id": "c_20260625000100987069"
+      "client_id": "c_20260625000100987069",
+      "email": ""
     },
     {
       "id": "20260624224611704521",
@@ -145,8 +146,8 @@
     },
     {
       "id": "c_20260625000100987069",
-      "first_name": "Grosso",
-      "last_name": "Elisa",
+      "first_name": "Elisa",
+      "last_name": "Grosso",
       "phone": "3482768714",
       "email": "",
       "notes": "",
