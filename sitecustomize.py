@@ -9,29 +9,96 @@ def _patch_app_source():
     text = path.read_text(encoding="utf-8")
     original = text
 
-    old_add_client = """def add_client(data, first, last, phone=\"\", email=\"\", notes=\"\", birth_date=\"\", anamnesis=\"\", goals=\"\"):\n    first, last = first.strip(), last.strip()\n    if not first or not last:\n        return False, \"Inserisci nome e cognome.\", None\n"""
-    new_add_client = """def add_client(data, first, last, phone=\"\", email=\"\", notes=\"\", birth_date=\"\", anamnesis=\"\", goals=\"\"):\n    first, last, phone = first.strip(), last.strip(), phone.strip()\n    if not first or not last or not phone:\n        return False, \"Inserisci cognome, nome e telefono.\", None\n"""
-    text = text.replace(old_add_client, new_add_client)
+    text = text.replace(
+        '''def add_client(data, first, last, phone="", email="", notes="", birth_date="", anamnesis="", goals=""):
+    first, last = first.strip(), last.strip()
+    if not first or not last:
+        return False, "Inserisci nome e cognome.", None
+''',
+        '''def add_client(data, first, last, phone="", email="", notes="", birth_date="", anamnesis="", goals=""):
+    first, last, phone = first.strip(), last.strip(), phone.strip()
+    if not first or not last or not phone:
+        return False, "Inserisci cognome, nome e telefono.", None
+'''
+    )
 
     text = text.replace(
         "from st_aggrid import AgGrid, DataReturnMode, GridOptionsBuilder, GridUpdateMode",
         "from st_aggrid import AgGrid, DataReturnMode, GridOptionsBuilder, GridUpdateMode, JsCode",
     )
 
-    old_clients_card = """    if selected:\n        st.session_state[\"open_client_id\"] = selected.get(\"ID\")\n    cid_open = st.session_state.get(\"open_client_id\")\n    if cid_open:\n        st.divider()\n        render_client_card(data, sha, cid_open, prefix=\"clienti\")\n"""
-    new_clients_card = """    if selected and selected.get(\"ID\"):\n        st.divider()\n        render_client_card(data, sha, selected.get(\"ID\"), prefix=\"clienti\")\n"""
-    text = text.replace(old_clients_card, new_clients_card)
+    text = text.replace(
+        '''    if selected:
+        st.session_state["open_client_id"] = selected.get("ID")
+    cid_open = st.session_state.get("open_client_id")
+    if cid_open:
+        st.divider()
+        render_client_card(data, sha, cid_open, prefix="clienti")
+''',
+        '''    if selected and selected.get("ID"):
+        st.divider()
+        render_client_card(data, sha, selected.get("ID"), prefix="clienti")
+'''
+    )
 
-    old_archive_card = """    if selected and selected.get(\"Client ID\"):\n        st.session_state[\"open_client_id\"] = selected.get(\"Client ID\")\n    cid_open = st.session_state.get(\"open_client_id\")\n    if cid_open:\n        st.divider()\n        render_client_card(data, sha, cid_open, prefix=\"archivio\")\n"""
-    new_archive_card = """    if selected and selected.get(\"Client ID\"):\n        st.divider()\n        render_client_card(data, sha, selected.get(\"Client ID\"), prefix=\"archivio\")\n"""
-    text = text.replace(old_archive_card, new_archive_card)
+    text = text.replace(
+        '''    if selected and selected.get("Client ID"):
+        st.session_state["open_client_id"] = selected.get("Client ID")
+    cid_open = st.session_state.get("open_client_id")
+    if cid_open:
+        st.divider()
+        render_client_card(data, sha, cid_open, prefix="archivio")
+''',
+        '''    if selected and selected.get("Client ID"):
+        st.divider()
+        render_client_card(data, sha, selected.get("Client ID"), prefix="archivio")
+'''
+    )
 
-    old_header = """def render_header():\n    c1, c2 = st.columns([1, 6])\n    with c1:\n        if Path(LOGO_PATH).exists():\n            st.image(LOGO_PATH, width=130)\n    with c2:\n        st.markdown(f\"<h1 style='margin-bottom:0;color:{DARK};'>Prenotazioni Pilates Reformer</h1>\", unsafe_allow_html=True)\n        st.caption(\"Gestionale interno Body Center · clienti, prenotazioni, pagamenti\")\n"""
-    new_header = """def render_header():\n    logo_html = \"\"\n    if Path(LOGO_PATH).exists():\n        logo_b64 = base64.b64encode(Path(LOGO_PATH).read_bytes()).decode(\"ascii\")\n        logo_html = f\"<img src='data:image/png;base64,{logo_b64}' style='width:128px;height:128px;object-fit:contain;filter:drop-shadow(0 6px 10px rgba(36,49,66,.10));'>\"\n    st.markdown(\n        f\"\"\"\n        <div style='display:flex;align-items:center;gap:28px;width:100%;box-sizing:border-box;background:linear-gradient(135deg,#f8fbf8 0%,#eef6f1 100%);border:1px solid #dfe8df;border-radius:26px;padding:22px 28px;margin:4px 0 18px 0;box-shadow:0 10px 30px rgba(36,49,66,.07);'>\n            <div style='flex:0 0 auto;'>{logo_html}</div>\n            <div>\n                <h1 style='margin:0;color:#243142;font-size:clamp(2.25rem,4vw,3.15rem);font-weight:850;line-height:1.02;letter-spacing:-.035em;'>Prenotazioni Pilates Reformer</h1>\n                <p style='margin:8px 0 0 0;color:#6f7780;font-size:1.06rem;'>Gestionale interno Body Center · clienti, prenotazioni, pagamenti</p>\n            </div>\n        </div>\n        \"\"\",\n        unsafe_allow_html=True,\n    )\n"""
-    text = text.replace(old_header, new_header)
+    text = text.replace(
+        '''def render_header():
+    c1, c2 = st.columns([1, 6])
+    with c1:
+        if Path(LOGO_PATH).exists():
+            st.image(LOGO_PATH, width=130)
+    with c2:
+        st.markdown(f"<h1 style='margin-bottom:0;color:{DARK};'>Prenotazioni Pilates Reformer</h1>", unsafe_allow_html=True)
+        st.caption("Gestionale interno Body Center · clienti, prenotazioni, pagamenti")
+''',
+        '''def render_header():
+    logo_html = ""
+    if Path(LOGO_PATH).exists():
+        logo_b64 = base64.b64encode(Path(LOGO_PATH).read_bytes()).decode("ascii")
+        logo_html = f"<img src='data:image/png;base64,{logo_b64}' style='width:128px;height:128px;object-fit:contain;filter:drop-shadow(0 6px 10px rgba(36,49,66,.10));'>"
+    st.markdown(
+        f"""
+        <div style='display:flex;align-items:center;gap:28px;width:100%;box-sizing:border-box;background:linear-gradient(135deg,#f8fbf8 0%,#eef6f1 100%);border:1px solid #dfe8df;border-radius:26px;padding:22px 28px;margin:4px 0 18px 0;box-shadow:0 10px 30px rgba(36,49,66,.07);'>
+            <div style='flex:0 0 auto;'>{logo_html}</div>
+            <div>
+                <h1 style='margin:0;color:#243142;font-size:clamp(2.25rem,4vw,3.15rem);font-weight:850;line-height:1.02;letter-spacing:-.035em;'>Prenotazioni Pilates Reformer</h1>
+                <p style='margin:8px 0 0 0;color:#6f7780;font-size:1.06rem;'>Gestionale interno Body Center · clienti, prenotazioni, pagamenti</p>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+'''
+    )
 
-    css_marker = """    .stApp {{ background: #fbfcfb; }}\n"""
-    css_insert = """    .stApp {{ background: #fbfcfb; }}\n    .block-container {{ padding-top:1rem !important; max-width:1240px !important; }}\n    div[data-testid=\"stRadio\"] > div {{ gap:.65rem !important; flex-wrap:wrap !important; }}\n    div[data-testid=\"stRadio\"] label {{ min-height:42px !important; padding:.55rem 1rem !important; border-radius:999px !important; border:1px solid #dce6dc !important; background:#fff !important; box-shadow:0 3px 10px rgba(36,49,66,.045) !important; }}\n    div[data-testid=\"stRadio\"] input[type=\"radio\"] {{ display:none !important; }}\n    div[data-testid=\"stRadio\"] label:has(input:checked) {{ background:#496744 !important; border-color:#496744 !important; }}\n    div[data-testid=\"stRadio\"] label:has(input:checked) p {{ color:#fff !important; }}\n    @media (max-width:760px) {{\n        .block-container {{ padding-left:.45rem !important; padding-right:.45rem !important; max-width:100% !important; }}\n        .ag-cell {{ font-size:12px !important; padding-left:4px !important; padding-right:4px !important; }}\n        .ag-header-cell-text {{ font-size:11px !important; }}\n    }}\n"""
+    css_marker = '''    .stApp {{ background: #fbfcfb; }}
+'''
+    css_insert = '''    .stApp {{ background: #fbfcfb; }}
+    .block-container {{ padding-top:1rem !important; max-width:1240px !important; }}
+    div[data-testid="stRadio"] > div {{ gap:.65rem !important; flex-wrap:wrap !important; }}
+    div[data-testid="stRadio"] label {{ min-height:42px !important; padding:.55rem 1rem !important; border-radius:999px !important; border:1px solid #dce6dc !important; background:#fff !important; box-shadow:0 3px 10px rgba(36,49,66,.045) !important; }}
+    div[data-testid="stRadio"] input[type="radio"] {{ display:none !important; }}
+    div[data-testid="stRadio"] label:has(input:checked) {{ background:#496744 !important; border-color:#496744 !important; }}
+    div[data-testid="stRadio"] label:has(input:checked) p {{ color:#fff !important; }}
+    @media (max-width:760px) {{
+        .block-container {{ padding-left:.45rem !important; padding-right:.45rem !important; max-width:100% !important; }}
+        .ag-theme-streamlit, .ag-root-wrapper {{ max-width:100vw !important; }}
+    }}
+'''
     if css_insert not in text:
         text = text.replace(css_marker, css_insert)
 
@@ -46,8 +113,9 @@ def _patch_app_source():
         'return df.sort_values(["Cliente", "_sort", "Ora"]).drop(columns=["_sort"]).reset_index(drop=True)',
     )
 
-    old_data_col = '    gb.configure_column("Data", editable=False, width=160, cellStyle=cell_style("center"))\n'
-    new_data_col = '''    gb.configure_column(
+    text = text.replace(
+        '    gb.configure_column("Data", editable=False, width=160, cellStyle=cell_style("center"))\n',
+        '''    gb.configure_column(
         "Data",
         editable=False,
         width=160,
@@ -64,12 +132,12 @@ def _patch_app_source():
         cellStyle=cell_style("center"),
     )
 '''
-    text = text.replace(old_data_col, new_data_col)
+    )
 
     mobile_functions = '''
 
 def archive_mobile_cards(df, data, sha):
-    st.caption("Vista compatta per telefono. Per modificare importi, pagamenti ed email usa la vista tabella PC.")
+    st.caption("Vista telefono: schede verticali leggibili. Premi 'Mostra tabella PC' solo da computer.")
     if df.empty:
         st.info("Nessuna prenotazione nel periodo selezionato.")
         return
@@ -105,40 +173,51 @@ def clients_mobile_cards(view, data, sha):
     if 'def archive_mobile_cards(' not in text:
         text = text.replace(marker, mobile_functions + marker)
 
-    clients_toggle = '''    if st.toggle("📱 Vista compatta telefono", key="clients_mobile_view"):
+    # Remove all previous mobile toggles/blocks to avoid remembered states and duplicate widgets.
+    for block in [
+        '''    if st.toggle("📱 Vista compatta telefono", key="clients_mobile_view"):
         clients_mobile_cards(view, data, sha)
         return
-'''
-    archive_toggle_old = '''    if st.toggle("📱 Vista compatta telefono", key="archive_mobile_view"):
+''',
+        '''    if st.toggle("📱 Vista compatta telefono", key="archive_mobile_view"):
         archive_mobile_cards(df, data, sha)
         return
-'''
-    archive_toggle_old_default = '''    if st.toggle("📱 Vista compatta telefono", value=True, key="archive_mobile_view"):
+''',
+        '''    if st.toggle("📱 Vista compatta telefono", value=True, key="archive_mobile_view"):
         archive_mobile_cards(df, data, sha)
         return
-'''
-    archive_toggle_new = '''    if st.toggle("📱 Vista compatta telefono", value=True, key="archive_mobile_view_v2"):
+''',
+        '''    if st.toggle("📱 Vista compatta telefono", value=True, key="archive_mobile_view_v2"):
         archive_mobile_cards(df, data, sha)
         return
-'''
-
-    text = text.replace(clients_toggle, '')
-    text = text.replace(archive_toggle_old, '')
-    text = text.replace(archive_toggle_old_default, '')
-    text = text.replace(archive_toggle_new, '')
+''',
+        '''    if st.toggle("💻 Mostra tabella PC", value=False, key="archive_show_pc_table_v3"):
+        pass
+    else:
+        return
+''',
+    ]:
+        text = text.replace(block, '')
 
     old_clients_view = '''    st.caption("Tabella clienti: clicca una riga per aprire la scheda qui sotto.")
     selected = client_grid(view, "client_grid")
 '''
-    text = text.replace(old_clients_view, clients_toggle + old_clients_view)
+    clients_block = '''    if st.toggle("📱 Vista compatta telefono", key="clients_mobile_view"):
+        clients_mobile_cards(view, data, sha)
+        return
+'''
+    if clients_block not in text:
+        text = text.replace(old_clients_view, clients_block + old_clients_view)
 
-    old_archive_view = '''    st.caption("Colonne editabili evidenziate: Email, Importo, Pagato e Note cliente. Clicca una riga per aprire la scheda cliente sotto.")
-    grid_key = f"archive_grid_{st.session_state.get('archive_nonce', 0)}"
+    table_marker = '    st.markdown("#### Modifica importi, pagamenti e note")\n'
+    forced_mobile = '''    st.markdown("#### Archivio telefono")
+    archive_mobile_cards(df, data, sha)
+    if not st.toggle("💻 Mostra tabella PC", value=False, key="archive_show_pc_table_v3"):
+        return
+
 '''
-    new_archive_view = '''    st.caption("Da telefono resta attiva la vista compatta. Disattivala solo da PC per modificare la tabella completa.")
-''' + archive_toggle_new + '''    grid_key = f"archive_grid_{st.session_state.get('archive_nonce', 0)}"
-'''
-    text = text.replace(old_archive_view, new_archive_view)
+    text = text.replace(forced_mobile, '')
+    text = text.replace(table_marker, forced_mobile + table_marker)
 
     if text != original:
         path.write_text(text, encoding="utf-8")
