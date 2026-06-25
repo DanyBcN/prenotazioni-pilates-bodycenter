@@ -160,7 +160,16 @@ def _patch_app_source():
     ]:
         text = text.replace(block, '')
 
-    mobile_html = '''
+    mobile_helpers = '''
+
+def is_mobile_client():
+    try:
+        headers = getattr(st, "context", None).headers
+        ua = str(headers.get("user-agent", headers.get("User-Agent", ""))).lower()
+    except Exception:
+        ua = ""
+    return any(token in ua for token in ["iphone", "android", "mobile", "ipad", "ipod"])
+
 
 def archive_mobile_html(df):
     cards = []
@@ -191,13 +200,15 @@ def archive_mobile_html(df):
     st.markdown("<div class='mobile-archive'>" + "".join(cards) + "</div>", unsafe_allow_html=True)
 '''
     marker = '\n\ndef render_archive(data, sha):\n'
-    if 'def archive_mobile_html(' not in text:
-        text = text.replace(marker, mobile_html + marker)
+    if 'def is_mobile_client(' not in text:
+        text = text.replace(marker, mobile_helpers + marker)
 
     insert_marker = '    st.markdown("#### Modifica importi, pagamenti e note")\n'
-    mobile_call = '    archive_mobile_html(df)\n'
-    text = text.replace(mobile_call, '')
-    text = text.replace(insert_marker, mobile_call + insert_marker)
+    mobile_call_old = '    archive_mobile_html(df)\n'
+    mobile_call_new = '    archive_mobile_html(df)\n    if is_mobile_client():\n        return\n'
+    text = text.replace(mobile_call_new, '')
+    text = text.replace(mobile_call_old, '')
+    text = text.replace(insert_marker, mobile_call_new + insert_marker)
 
     if text != original:
         path.write_text(text, encoding="utf-8")
