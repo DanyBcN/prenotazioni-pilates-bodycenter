@@ -169,6 +169,23 @@
       "paid": false,
       "instructor": "Alice",
       "created_by": "staff"
+    },
+    {
+      "id": "b_20260625135155001631",
+      "created_at": "2026-06-25T13:51:55",
+      "client_id": "c_20260625113239500924",
+      "date": "2026-07-06",
+      "day": "Lunedì",
+      "time": "18:00",
+      "name": "Muleer Melanie",
+      "phone": "+39 389 584 1270",
+      "email": "",
+      "note": "",
+      "status": "Confermata",
+      "amount": 0.0,
+      "paid": false,
+      "instructor": "Alice",
+      "created_by": "staff"
     }
   ],
   "clients": [
