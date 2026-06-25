@@ -11,7 +11,6 @@ def status_icon(status):
 
 builtins.status_icon = status_icon
 
-# --- PDF: force long text/note cells to wrap inside table cells ---
 try:
     import reportlab.platypus as _platypus
     from reportlab.lib import colors
@@ -20,42 +19,19 @@ try:
     from reportlab.platypus import Paragraph
 
     _OriginalTable = _platypus.Table
-    _pdf_body_style = ParagraphStyle(
-        "BodyCenterWrapped",
-        fontName="Helvetica",
-        fontSize=6,
-        leading=7.5,
-        alignment=TA_CENTER,
-        textColor=colors.black,
-        wordWrap="CJK",
-    )
-    _pdf_header_style = ParagraphStyle(
-        "HeaderCenterWrapped",
-        fontName="Helvetica-Bold",
-        fontSize=6,
-        leading=7.5,
-        alignment=TA_CENTER,
-        textColor=colors.white,
-        wordWrap="CJK",
-    )
+    _pdf_body_style = ParagraphStyle("BodyCenterWrapped", fontName="Helvetica", fontSize=6, leading=7.5, alignment=TA_CENTER, textColor=colors.black, wordWrap="CJK")
+    _pdf_header_style = ParagraphStyle("HeaderCenterWrapped", fontName="Helvetica-Bold", fontSize=6, leading=7.5, alignment=TA_CENTER, textColor=colors.white, wordWrap="CJK")
 
     def _wrap_pdf_cell(value, is_header=False):
         if value is None:
             value = ""
         if isinstance(value, str):
-            text = html.escape(value).replace("\n", "<br/>")
-            return Paragraph(text, _pdf_header_style if is_header else _pdf_body_style)
+            return Paragraph(html.escape(value).replace("\n", "<br/>"), _pdf_header_style if is_header else _pdf_body_style)
         return value
 
     def WrappingTable(data, *args, **kwargs):
         if isinstance(data, (list, tuple)):
-            wrapped = []
-            for row_idx, row in enumerate(data):
-                if isinstance(row, (list, tuple)):
-                    wrapped.append([_wrap_pdf_cell(cell, row_idx == 0) for cell in row])
-                else:
-                    wrapped.append(row)
-            data = wrapped
+            data = [[_wrap_pdf_cell(cell, i == 0) for cell in row] if isinstance(row, (list, tuple)) else row for i, row in enumerate(data)]
         return _OriginalTable(data, *args, **kwargs)
 
     _platypus.Table = WrappingTable
@@ -67,21 +43,9 @@ POINTER_TABLE_CSS = """
 div[data-testid="stDataFrame"] canvas,
 div[data-testid="stDataFrame"] [role="grid"],
 div[data-testid="stDataFrame"] [role="row"],
-div[data-testid="stDataFrame"] [role="gridcell"] {
-    cursor: pointer !important;
-}
-div[data-testid="stDataFrame"]:hover {
-    cursor: pointer !important;
-}
-.login-card {
-    max-width: 460px;
-    padding: 22px 24px;
-    border: 1px solid #e2e8e0;
-    border-radius: 16px;
-    background: #ffffff;
-    box-shadow: 0 8px 24px rgba(36, 49, 66, 0.06);
-    margin-top: 20px;
-}
+div[data-testid="stDataFrame"] [role="gridcell"] { cursor: pointer !important; }
+div[data-testid="stDataFrame"]:hover { cursor: pointer !important; }
+.login-card { max-width: 460px; padding: 22px 24px; border: 1px solid #e2e8e0; border-radius: 16px; background: #ffffff; box-shadow: 0 8px 24px rgba(36, 49, 66, 0.06); margin-top: 20px; }
 </style>
 """
 
@@ -95,12 +59,41 @@ AGGRID_CSS = {
 try:
     import pandas as pd
     import streamlit as st
+    import streamlit.components.v1 as components
 
     _original_dataframe = st.dataframe
     _original_rerun = st.rerun
+    _original_success = st.success
+    _original_tabs = st.tabs
 
     def _bump_grid_nonce():
         st.session_state["_grid_refresh_nonce"] = int(st.session_state.get("_grid_refresh_nonce", 0)) + 1
+
+    def _click_archive_tab_script():
+        components.html(
+            """
+            <script>
+            setTimeout(function() {
+                const tabs = Array.from(window.parent.document.querySelectorAll('button[role="tab"]'));
+                const archive = tabs.find(t => (t.innerText || '').includes('Archivio'));
+                if (archive) { archive.click(); }
+            }, 300);
+            </script>
+            """,
+            height=0,
+            width=0,
+        )
+
+    def success_with_flags(body, *args, **kwargs):
+        text = str(body)
+        if "Prenotazione salvata" in text:
+            st.session_state["_open_archive_after_rerun"] = True
+        if "Eliminate" in text or "Eliminata" in text:
+            st.session_state["_open_archive_after_rerun"] = True
+            _bump_grid_nonce()
+        return _original_success(body, *args, **kwargs)
+
+    st.success = success_with_flags
 
     def rerun_with_grid_refresh(*args, **kwargs):
         _bump_grid_nonce()
@@ -108,10 +101,16 @@ try:
 
     st.rerun = rerun_with_grid_refresh
 
-    # Patch AgGrid so a programmatic st.rerun after delete/save rebuilds the table component.
+    def tabs_with_auto_archive(labels, *args, **kwargs):
+        result = _original_tabs(labels, *args, **kwargs)
+        if st.session_state.pop("_open_archive_after_rerun", False):
+            _click_archive_tab_script()
+        return result
+
+    st.tabs = tabs_with_auto_archive
+
     try:
         import st_aggrid as _st_aggrid
-
         _OriginalAgGrid = _st_aggrid.AgGrid
 
         def AgGrid_with_refresh(*args, **kwargs):
@@ -129,16 +128,12 @@ try:
         def header(self, *args, **kwargs):
             st.markdown("<div class='login-card'>", unsafe_allow_html=True)
             return st.markdown("### Accesso staff")
-
         def text_input(self, *args, **kwargs):
             return st.text_input(*args, **kwargs)
-
         def success(self, *args, **kwargs):
             return None
-
         def error(self, *args, **kwargs):
             return st.error(*args, **kwargs)
-
         def __getattr__(self, name):
             return getattr(st, name)
 
@@ -153,43 +148,23 @@ try:
         except Exception:
             st.markdown(POINTER_TABLE_CSS, unsafe_allow_html=True)
             return _original_dataframe(data, **kwargs)
-
         df = data.copy() if hasattr(data, "copy") else pd.DataFrame(data)
         if df.empty:
             return _empty_selection_event()
-
         df = df.reset_index(drop=True)
         df["__row_index"] = df.index
-
         gb = GridOptionsBuilder.from_dataframe(df)
         gb.configure_selection(selection_mode="single", use_checkbox=False)
-        gb.configure_grid_options(
-            domLayout="normal",
-            rowHeight=42,
-            suppressCellFocus=False,
-            rowSelection="single",
-            enableCellTextSelection=False,
-        )
+        gb.configure_grid_options(domLayout="normal", rowHeight=42, suppressCellFocus=False, rowSelection="single", enableCellTextSelection=False)
         gb.configure_column("__row_index", hide=True)
         for col in df.columns:
             if col != "__row_index":
                 gb.configure_column(col, sortable=True, filter=True, resizable=True)
-
-        response = AgGrid(
-            df,
-            gridOptions=gb.build(),
-            height=min(420, 70 + 43 * max(len(df), 3)),
-            fit_columns_on_grid_load=True,
-            allow_unsafe_jscode=True,
-            custom_css=AGGRID_CSS,
-            update_mode=GridUpdateMode.SELECTION_CHANGED,
-            key=kwargs.get("key", "client_aggrid"),
-        )
+        response = AgGrid(df, gridOptions=gb.build(), height=min(420, 70 + 43 * max(len(df), 3)), fit_columns_on_grid_load=True, allow_unsafe_jscode=True, custom_css=AGGRID_CSS, update_mode=GridUpdateMode.SELECTION_CHANGED, key=kwargs.get("key", "client_aggrid"))
         selected = response.get("selected_rows", []) or []
         if selected:
             try:
-                idx = int(selected[0].get("__row_index", 0))
-                return SimpleNamespace(selection=SimpleNamespace(rows=[idx]))
+                return SimpleNamespace(selection=SimpleNamespace(rows=[int(selected[0].get("__row_index", 0))]))
             except Exception:
                 return _empty_selection_event()
         return _empty_selection_event()
