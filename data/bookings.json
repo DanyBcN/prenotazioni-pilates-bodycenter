@@ -477,6 +477,18 @@
       "anamnesis": "",
       "goals": "",
       "created_at": "2026-06-25T17:48:34"
+    },
+    {
+      "id": "c_20260626142926655623",
+      "first_name": "Luisella",
+      "last_name": "Giraudo",
+      "phone": "3356672011",
+      "email": "luetlu@alice.it",
+      "notes": "",
+      "birth_date": "27/12/1969",
+      "anamnesis": "",
+      "goals": "",
+      "created_at": "2026-06-26T14:29:26"
     }
   ]
 }
