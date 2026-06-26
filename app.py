@@ -853,6 +853,17 @@ def render_search(data):
         st.dataframe(res.drop(columns=["Elimina", "ID", "Client ID", "Data ISO"], errors="ignore"), use_container_width=True, hide_index=True)
 
 
+def render_archive_open_client(data, sha):
+    open_cid = st.session_state.get("archive_open_client_id")
+    if not open_cid:
+        return False
+    if st.button("← Torna all’Archivio", key="archive_back_to_list", use_container_width=is_mobile_client()):
+        st.session_state.pop("archive_open_client_id", None)
+        st.rerun()
+    render_client_form(data, sha, open_cid, prefix="archivio_page", close_key="archive_open_client_id")
+    return True
+
+
 def render_archive_mobile(df, data, sha):
     open_cid = st.session_state.get("archive_open_client_id")
     if open_cid:
@@ -890,6 +901,8 @@ def render_archive_mobile(df, data, sha):
 
 
 def render_archive(data, sha):
+    if render_archive_open_client(data, sha):
+        return
     st.subheader("Archivio, pagamenti e statistiche")
     dfa = archive_df(data)
     if dfa.empty:
@@ -964,11 +977,10 @@ def render_archive(data, sha):
             save_and_rerun(data, sha, "Delete bookings")
 
     opts = ["—"] + [f"{r.Cliente} | {r['Client ID']}" for _, r in df.dropna(subset=["Client ID"]).drop_duplicates("Client ID").iterrows()]
-    choice = st.selectbox("Apri scheda cliente", opts)
+    choice = st.selectbox("Apri scheda cliente", opts, key="archive_open_select")
     if choice != "—":
-        cid = choice.split("|")[-1].strip()
-        st.divider()
-        render_client_form(data, sha, cid, prefix="archivio_pc")
+        st.session_state["archive_open_client_id"] = choice.split("|")[-1].strip()
+        st.rerun()
 
     a, b = st.columns(2)
     a.download_button("Scarica Excel", data=make_excel(edited), file_name="prenotazioni_pilates.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -1005,6 +1017,7 @@ section = st.radio("Sezione", SECTIONS, horizontal=True, key="section", label_vi
 if st.session_state.get("_last_section") != section:
     st.session_state.pop("client_open_id", None)
     st.session_state.pop("archive_open_client_id", None)
+    st.session_state.pop("archive_open_select", None)
     st.session_state["_last_section"] = section
 st.divider()
 
