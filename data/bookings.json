@@ -271,6 +271,23 @@
       "paid": false,
       "instructor": "Grazia",
       "created_by": "staff"
+    },
+    {
+      "id": "b_20260626143031872524",
+      "created_at": "2026-06-26T14:30:31",
+      "client_id": "c_20260626142926655623",
+      "date": "2026-06-26",
+      "day": "Venerdì",
+      "time": "14:00",
+      "name": "Giraudo Luisella",
+      "phone": "3356672011",
+      "email": "luetlu@alice.it",
+      "note": "Omaggio",
+      "status": "Confermata",
+      "amount": 0.0,
+      "paid": false,
+      "instructor": "Grazia",
+      "created_by": "staff"
     }
   ],
   "clients": [
