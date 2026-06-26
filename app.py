@@ -1,1020 +1,802 @@
-import base64
-import json
 import os
-import re
-from datetime import date, datetime, timedelta
-from io import BytesIO
-from pathlib import Path
+import sqlite3
+from datetime import date
 
 import pandas as pd
-import requests
 import streamlit as st
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4, landscape
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.units import cm
-from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from fpdf import FPDF
 
-APP_TITLE = "Prenotazioni Pilates Reformer"
-CAPACITY = 4
-LOCAL_DATA_PATH = "data/bookings.json"
-LOGO_PATH = "assets/logo.png"
-INSTRUCTORS = ["Grazia", "Alice"]
-GREEN = "#496744"
-DARK = "#243142"
-LIGHT_GREEN = "#eef6f2"
-SECTIONS = ["Settimana", "Prenota", "Clienti", "Cerca", "Archivio"]
+# =========================================================
+# CONFIG
+# =========================================================
+st.set_page_config(page_title="DB Nutrition Performance", layout="wide", page_icon="🧬")
 
-SCHEDULE = {
-    0: ["08:30", "09:30", "10:30", "17:00", "18:00", "19:00"],
-    1: ["09:30", "10:30", "11:30", "12:45", "14:30", "19:00"],
-    2: ["08:30", "09:30", "10:30", "11:30", "12:45", "14:30", "15:30", "16:30", "17:30", "18:30"],
-    3: ["17:00", "18:00", "19:00"],
-    4: ["14:00", "15:00", "16:00", "17:00", "18:00", "19:00"],
-}
-DAY_NAMES = {0: "Lunedì", 1: "Martedì", 2: "Mercoledì", 3: "Giovedì", 4: "Venerdì", 5: "Sabato", 6: "Domenica"}
-DAY_ABBR = {0: "Lun", 1: "Mar", 2: "Mer", 3: "Gio", 4: "Ven", 5: "Sab", 6: "Dom"}
-MONTH_NAMES = {1: "gennaio", 2: "febbraio", 3: "marzo", 4: "aprile", 5: "maggio", 6: "giugno", 7: "luglio", 8: "agosto", 9: "settembre", 10: "ottobre", 11: "novembre", 12: "dicembre"}
+DB_NAME = "performance_lab_pro.db"
+LOGO_PATH = "Logo NUTRITION AND PERFORMANCE.png"
+PROFILI = ["Scalatore", "Passista", "Triatleta", "Granfondista", "Altro"]
+TIPI_TEST = ["Manuale", "Test 20'", "Test 8'", "Incrementale"]
 
 
-# -----------------------------
-# Base helpers
-# -----------------------------
-
-def get_secret(name, default=""):
-    try:
-        return str(st.secrets.get(name, default))
-    except Exception:
-        return os.environ.get(name, default)
+# =========================================================
+# DATABASE
+# =========================================================
+def get_connection():
+    return sqlite3.connect(DB_NAME)
 
 
-def github_enabled():
-    return bool(get_secret("GITHUB_TOKEN") and get_secret("GITHUB_REPO") and get_secret("GITHUB_BRANCH", "main"))
+def init_db():
+    with get_connection() as conn:
+        c = conn.cursor()
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS atleti (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nome TEXT NOT NULL,
+                cognome TEXT NOT NULL,
+                altezza REAL,
+                profilo TEXT
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS visite (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                atleta_id INTEGER NOT NULL,
+                data TEXT,
+                peso REAL,
+                fm REAL,
+                ftp REAL,
+                lthr INTEGER,
+                peso_t REAL,
+                fm_t REAL,
+                ftp_t REAL,
+                dist_km REAL,
+                grad REAL,
+                bike_w REAL,
+                t_att REAL,
+                t_tar REAL,
+                wkg_att REAL,
+                wkg_tar REAL,
+                FOREIGN KEY(atleta_id) REFERENCES atleti(id)
+            )
+        """)
 
-
-def github_headers():
-    return {
-        "Auth" + "orization": ("B" + "earer ") + get_secret("GITHUB_TOKEN"),
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-
-
-def github_file_url():
-    return f"https://api.github.com/repos/{get_secret('GITHUB_REPO')}/contents/{LOCAL_DATA_PATH}"
-
-
-def save_data(data, sha=None, message="Update data"):
-    if github_enabled():
-        body = {
-            "message": message,
-            "content": base64.b64encode(json.dumps(data, ensure_ascii=False, indent=2).encode()).decode(),
-            "branch": get_secret("GITHUB_BRANCH", "main"),
+        # Migrazione per database vecchi già creati
+        c.execute("PRAGMA table_info(visite)")
+        existing_cols = [x[1] for x in c.fetchall()]
+        migrations = {
+            "wkg_att": "ALTER TABLE visite ADD COLUMN wkg_att REAL",
+            "wkg_tar": "ALTER TABLE visite ADD COLUMN wkg_tar REAL",
         }
-        if sha:
-            body["sha"] = sha
-        r = requests.put(github_file_url(), headers=github_headers(), json=body, timeout=20)
-        if r.status_code == 409:
-            st.error("Conflitto dati: ricarica la pagina e riprova.")
-            st.stop()
-        r.raise_for_status()
-        return
-
-    Path(LOCAL_DATA_PATH).parent.mkdir(parents=True, exist_ok=True)
-    Path(LOCAL_DATA_PATH).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        for col, sql in migrations.items():
+            if col not in existing_cols:
+                c.execute(sql)
+        conn.commit()
 
 
-def load_data():
-    if github_enabled():
-        r = requests.get(
-            github_file_url(),
-            headers=github_headers(),
-            params={"ref": get_secret("GITHUB_BRANCH", "main")},
-            timeout=20,
+init_db()
+
+
+def get_all_atleti():
+    with get_connection() as conn:
+        return pd.read_sql_query(
+            "SELECT * FROM atleti ORDER BY cognome ASC, nome ASC, id ASC",
+            conn,
         )
-        if r.status_code == 404:
-            data = {"bookings": [], "clients": []}
-            save_data(data, None, "Initialize storage")
-            return data, None
-        r.raise_for_status()
-        payload = r.json()
-        return json.loads(base64.b64decode(payload["content"]).decode()), payload.get("sha")
-
-    p = Path(LOCAL_DATA_PATH)
-    if not p.exists():
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps({"bookings": [], "clients": []}, ensure_ascii=False, indent=2), encoding="utf-8")
-    return json.loads(p.read_text(encoding="utf-8")), None
 
 
-def parse_date(value):
-    if isinstance(value, date):
-        return value
-    s = str(value or "").strip()
-    if not s:
-        raise ValueError("data vuota")
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+def get_visite(atleta_id):
+    with get_connection() as conn:
+        return pd.read_sql_query(
+            """
+            SELECT id, data, peso, fm, ftp, lthr, peso_t, fm_t, ftp_t,
+                   dist_km, grad, bike_w, t_att, t_tar, wkg_att, wkg_tar
+            FROM visite
+            WHERE atleta_id=?
+            ORDER BY data DESC, id DESC
+            """,
+            conn,
+            params=(int(atleta_id),),
+        )
+
+
+# =========================================================
+# MOTORE SCIENTIFICO
+# =========================================================
+class BioPerformance:
+    @staticmethod
+    def calculate_ftp(tipo, valore):
+        factors = {
+            "Manuale": 1.00,
+            "Test 20'": 0.95,
+            "Test 8'": 0.90,
+            "Incrementale": 0.75,
+        }
+        return float(valore) * factors.get(tipo, 1.00)
+
+    @staticmethod
+    def estimate_time(watt, peso, km, pend, bike_w):
         try:
-            return datetime.strptime(s, fmt).date()
-        except ValueError:
-            pass
-    return pd.to_datetime(s, dayfirst=True).date()
+            watt = float(watt)
+            peso = float(peso)
+            km = float(km)
+            pend = float(pend)
+            bike_w = float(bike_w)
+            if watt <= 0 or peso <= 0 or km <= 0:
+                return 0.0
+            f_res = (peso + bike_w) * 9.81 * ((pend / 100) + 0.005)
+            if f_res <= 0:
+                return 0.0
+            speed_ms = watt / f_res
+            return (km * 1000 / speed_ms) / 60
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def power_zones_coggan(ftp):
+        ftp = float(ftp)
+        return [
+            ("Z1 Recupero", 0, round(ftp * 0.55)),
+            ("Z2 Endurance", round(ftp * 0.56), round(ftp * 0.75)),
+            ("Z3 Tempo", round(ftp * 0.76), round(ftp * 0.90)),
+            ("Z4 Soglia", round(ftp * 0.91), round(ftp * 1.05)),
+            ("Z5 VO2max", round(ftp * 1.06), round(ftp * 1.20)),
+            ("Z6 Capacità anaerobica", round(ftp * 1.21), round(ftp * 1.50)),
+            ("Z7 Neuromuscolare", round(ftp * 1.51), f"> {round(ftp * 1.50)}"),
+        ]
+
+    @staticmethod
+    def hr_zones_fthr(fthr):
+        fthr = int(fthr)
+        return [
+            ("Z1 Recupero", 0, round(fthr * 0.80)),
+            ("Z2 Endurance", round(fthr * 0.81), round(fthr * 0.89)),
+            ("Z3 Tempo", round(fthr * 0.90), round(fthr * 0.93)),
+            ("Z4 Soglia", round(fthr * 0.94), round(fthr * 0.99)),
+            ("Z5 Sopra soglia", round(fthr * 1.00), f"> {round(fthr * 1.00)}"),
+        ]
+
+    @staticmethod
+    def benchmarks():
+        return pd.DataFrame(
+            [
+                ["World Tour", "5–7%", "6.0–6.5", 65],
+                ["Pro Continental", "7–9%", "5.5–6.0", 68],
+                ["Elite / U23", "8–11%", "4.5–5.5", 70],
+                ["Amatore Top", "10–14%", "3.5–4.5", 72],
+                ["Cicloturista", ">15%", "<3.0", 78],
+            ],
+            columns=["Categoria", "Range FM %", "W/kg soglia", "Peso medio kg"],
+        )
 
 
-def date_key(d):
-    return d.isoformat()
-
-
-def date_it(value):
-    try:
-        return parse_date(value).strftime("%d-%m-%Y")
-    except Exception:
-        return ""
-
-
-def date_label_it(value):
-    try:
-        d = parse_date(value)
-        return f"{DAY_ABBR.get(d.weekday(), '')} {d.day} {MONTH_NAMES.get(d.month, d.strftime('%m'))} {str(d.year)[-2:]}"
-    except Exception:
-        return str(value or "")
-
-
-def money(value):
-    try:
-        return round(float(value or 0), 2)
-    except Exception:
-        return 0.0
-
-
-def to_bool(value):
-    if isinstance(value, bool):
-        return value
-    return str(value).strip().lower() in {"true", "1", "sì", "si", "yes", "y"}
-
-
-def new_id(prefix=""):
-    return prefix + datetime.now().strftime("%Y%m%d%H%M%S%f")
-
-
-def norm(value):
-    return re.sub(r"\s+", " ", str(value or "").strip().lower())
-
-
-def client_key(first, last):
-    return f"{norm(first)}|{norm(last)}"
-
-
-def full_name(c):
-    if not c:
-        return ""
-    return f"{str(c.get('last_name', '')).strip()} {str(c.get('first_name', '')).strip()}".strip()
-
-
-def split_name(name):
-    parts = str(name or "").strip().split()
-    if not parts:
-        return "", ""
-    if len(parts) == 1:
-        return parts[0], ""
-    return " ".join(parts[1:]), parts[0]
-
-
-def age_from_birth(value):
-    if not value:
-        return ""
-    try:
-        b = parse_date(value)
-        today = date.today()
-        return today.year - b.year - ((today.month, today.day) < (b.month, b.day))
-    except Exception:
-        return ""
-
-
-def is_mobile_client():
-    try:
-        headers = getattr(st, "context", None).headers
-        ua = str(headers.get("user-agent", headers.get("User-Agent", ""))).lower()
-    except Exception:
-        ua = ""
-    return any(t in ua for t in ["iphone", "android", "mobile", "ipad", "ipod"])
-
-
-# -----------------------------
-# Data model
-# -----------------------------
-
-def get_client(data, cid):
-    return next((c for c in data.get("clients", []) if c.get("id") == cid), None)
-
-
-def ensure_data(data):
-    data.setdefault("bookings", [])
-    data.setdefault("clients", [])
-
-    for c in data["clients"]:
-        c.setdefault("id", new_id("c_"))
-        c.setdefault("first_name", "")
-        c.setdefault("last_name", "")
-        c.setdefault("phone", "")
-        c.setdefault("email", "")
-        c.setdefault("notes", "")
-        c.setdefault("birth_date", "")
-        c.setdefault("anamnesis", "")
-        c.setdefault("goals", "")
-        c.setdefault("created_at", "")
-
-    keys = {client_key(c.get("first_name", ""), c.get("last_name", "")): c for c in data["clients"]}
-    for b in data["bookings"]:
-        b.setdefault("id", new_id("b_"))
-        b.setdefault("amount", 0)
-        b.setdefault("paid", False)
-        b.setdefault("note", "")
-        b.setdefault("instructor", "")
-        b.setdefault("email", "")
-        b.setdefault("status", "Confermata")
-        b.setdefault("date", date.today().isoformat())
-        b.setdefault("time", "")
-        if b.get("client_id"):
-            continue
-        first, last = split_name(b.get("name", ""))
-        k = client_key(first, last)
-        if k.strip("|") and k in keys:
-            b["client_id"] = keys[k]["id"]
-        elif k.strip("|"):
-            c = {
-                "id": new_id("c_"),
-                "first_name": first,
-                "last_name": last,
-                "phone": b.get("phone", ""),
-                "email": b.get("email", ""),
-                "notes": "",
-                "birth_date": "",
-                "anamnesis": "",
-                "goals": "",
-                "created_at": datetime.now().isoformat(timespec="seconds"),
-            }
-            data["clients"].append(c)
-            keys[k] = c
-            b["client_id"] = c["id"]
-    return data
-
-
-def client_options(data):
-    return sorted(
-        [f"{full_name(c)} | {c.get('phone','')} | {c.get('email','')} | {c.get('id')}" for c in data.get("clients", [])],
-        key=str.lower,
-    )
-
-
-def option_to_client_id(option):
-    return option.split("|")[-1].strip()
-
-
-def add_client(data, first, last, phone="", email="", notes="", birth_date="", anamnesis="", goals=""):
-    first, last, phone = first.strip(), last.strip(), phone.strip()
-    if not first or not last or not phone:
-        return False, "Inserisci cognome, nome e telefono.", None
-    k = client_key(first, last)
-    for c in data.get("clients", []):
-        if client_key(c.get("first_name", ""), c.get("last_name", "")) == k:
-            return False, "Cliente già presente: nome e cognome devono essere univoci.", c.get("id")
-    cid = new_id("c_")
-    data["clients"].append({
-        "id": cid,
-        "first_name": first,
-        "last_name": last,
-        "phone": phone,
-        "email": email.strip(),
-        "notes": notes.strip(),
-        "birth_date": birth_date.strip(),
-        "anamnesis": anamnesis.strip(),
-        "goals": goals.strip(),
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-    })
-    return True, "Cliente salvato.", cid
-
-
-def update_client_record(data, cid, first, last, phone, email, birth, notes, anamnesis, goals):
-    c = get_client(data, cid)
-    if not c:
-        return False, "Cliente non trovato."
-    first, last = first.strip(), last.strip()
-    if not first or not last:
-        return False, "Nome e cognome sono obbligatori."
-    k = client_key(first, last)
-    for other in data.get("clients", []):
-        if other.get("id") != cid and client_key(other.get("first_name", ""), other.get("last_name", "")) == k:
-            return False, "Esiste già un altro cliente con lo stesso nome e cognome."
-
-    c.update({
-        "first_name": first,
-        "last_name": last,
-        "phone": phone.strip(),
-        "email": email.strip(),
-        "birth_date": birth.strip(),
-        "notes": notes.strip(),
-        "anamnesis": anamnesis.strip(),
-        "goals": goals.strip(),
-    })
-    for b in data.get("bookings", []):
-        if b.get("client_id") == cid:
-            b["name"] = full_name(c)
-            b["phone"] = c.get("phone", "")
-            b["email"] = c.get("email", "")
-    return True, "Scheda cliente aggiornata."
-
-
-def last_visit(data, cid):
-    dates = []
-    for b in data.get("bookings", []):
-        if b.get("client_id") == cid and b.get("status") != "Annullata":
-            try:
-                dates.append(parse_date(b.get("date")))
-            except Exception:
-                pass
-    return max(dates) if dates else None
-
-
-def clients_df(data, sort_by="Alfabetico"):
-    rows = []
-    for c in data.get("clients", []):
-        lv = last_visit(data, c.get("id"))
-        rows.append({
-            "ID": c.get("id"),
-            "Cognome": c.get("last_name", ""),
-            "Nome": c.get("first_name", ""),
-            "Telefono": c.get("phone", ""),
-            "Email": c.get("email", ""),
-            "Ultima lezione": date_it(lv) if lv else "",
-            "_last": lv or date(1900, 1, 1),
-        })
-    if not rows:
-        return pd.DataFrame(columns=["ID", "Cognome", "Nome", "Telefono", "Email", "Ultima lezione", "_last"])
-    df = pd.DataFrame(rows)
-    if sort_by == "Ultima visita":
-        return df.sort_values(["_last", "Cognome", "Nome"], ascending=[False, True, True]).reset_index(drop=True)
-    return df.sort_values(["Cognome", "Nome"]).reset_index(drop=True)
-
-
-# -----------------------------
-# Bookings
-# -----------------------------
-
-def times_for(d):
-    return SCHEDULE.get(d.weekday(), [])
-
-
-def next_days(start, n=5):
-    out, d = [], start
-    while len(out) < n:
-        if d.weekday() in SCHEDULE:
-            out.append(d)
-        d += timedelta(days=1)
-    return out
-
-
-def slot_rows(data, d, t, include_cancelled=False):
-    return sorted(
-        [b for b in data.get("bookings", []) if b.get("date") == date_key(d) and b.get("time") == t and (include_cancelled or b.get("status") != "Annullata")],
-        key=lambda x: x.get("created_at", ""),
-    )
-
-
-def confirmed_count(data, d, t, exclude_id=None):
-    return sum(1 for b in slot_rows(data, d, t) if b.get("status") == "Confermata" and b.get("id") != exclude_id)
-
-
-def auto_status(data, d, t):
-    return "Confermata" if confirmed_count(data, d, t) < CAPACITY else "Lista attesa"
-
-
-def slot_status(data, d, t):
-    rows = slot_rows(data, d, t)
-    conf = [b for b in rows if b.get("status") == "Confermata"]
-    wait = [b for b in rows if b.get("status") == "Lista attesa"]
-    return len(conf), len(wait), conf, wait
-
-
-def status_icon(status):
-    return {"Confermata": "✅", "Lista attesa": "⏳", "Annullata": "❌"}.get(status, "")
-
-
-def create_booking(data, cid, d, t, amount, paid, instructor, note):
-    c = get_client(data, cid)
-    if not c:
-        raise ValueError("Cliente non trovato.")
-    b = {
-        "id": new_id("b_"),
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-        "client_id": cid,
-        "date": date_key(d),
-        "day": DAY_NAMES[d.weekday()],
-        "time": t,
-        "name": full_name(c),
-        "phone": c.get("phone", ""),
-        "email": c.get("email", ""),
-        "note": note.strip(),
-        "status": auto_status(data, d, t),
-        "amount": money(amount),
-        "paid": bool(paid),
-        "instructor": instructor,
-        "created_by": "staff",
+# =========================================================
+# PDF
+# =========================================================
+def pdf_safe(text):
+    text = "" if text is None else str(text)
+    repl = {
+        "à": "a", "è": "e", "é": "e", "ì": "i", "ò": "o", "ù": "u",
+        "À": "A", "È": "E", "É": "E", "Ì": "I", "Ò": "O", "Ù": "U",
+        "²": "2", "₂": "2", "VO₂": "VO2", "–": "-", "→": "->",
+        "≥": ">=", "≤": "<=",
     }
-    data["bookings"].append(b)
-    return b
+    for k, v in repl.items():
+        text = text.replace(k, v)
+    return text.encode("latin-1", "replace").decode("latin-1")
 
 
-def change_status(data, bid, status):
-    for b in data.get("bookings", []):
-        if b.get("id") == bid:
-            d, t = parse_date(b["date"]), b["time"]
-            if status == "Confermata" and confirmed_count(data, d, t, bid) >= CAPACITY:
-                st.error("Lezione già piena (4/4).")
-                return False
-            b["status"] = status
-            return True
-    return False
+def make_report_dict(nome, cognome, altezza, profilo, data_iso, peso, fm, ftp, lthr,
+                     peso_t, fm_t, ftp_t, dist, grad, bike, tipo_test="Archivio"):
+    altezza = float(altezza)
+    peso = float(peso)
+    peso_t = float(peso_t)
+    ftp = float(ftp)
+    ftp_t = float(ftp_t)
+    lthr = int(lthr)
+
+    tempo_att = BioPerformance.estimate_time(ftp, peso, dist, grad, bike)
+    tempo_tar = BioPerformance.estimate_time(ftp_t, peso_t, dist, grad, bike)
+    wkg_att = ftp / peso if peso else 0
+    wkg_tar = ftp_t / peso_t if peso_t else 0
+
+    try:
+        data_it = pd.to_datetime(data_iso).strftime("%d/%m/%Y")
+    except Exception:
+        data_it = str(data_iso)
+
+    return {
+        "nome": nome,
+        "cognome": cognome,
+        "altezza": altezza,
+        "profilo": profilo,
+        "data": data_it,
+        "data_iso": str(data_iso),
+        "peso_att": peso,
+        "fm_att": float(fm),
+        "ftp_att": ftp,
+        "lthr": lthr,
+        "bmi_att": peso / ((altezza / 100) ** 2),
+        "tipo_test": tipo_test,
+        "peso_tar": peso_t,
+        "fm_tar": float(fm_t),
+        "ftp_tar": ftp_t,
+        "bmi_tar": peso_t / ((altezza / 100) ** 2),
+        "dist": float(dist),
+        "grad": float(grad),
+        "bike": float(bike),
+        "tempo_att": tempo_att,
+        "tempo_tar": tempo_tar,
+        "tempo_delta": tempo_tar - tempo_att,
+        "wkg_att": wkg_att,
+        "wkg_tar": wkg_tar,
+        "wkg_delta": wkg_tar - wkg_att,
+        "zones_power_att": BioPerformance.power_zones_coggan(ftp),
+        "zones_power_tar": BioPerformance.power_zones_coggan(ftp_t),
+        "zones_hr": BioPerformance.hr_zones_fthr(lthr),
+    }
 
 
-def delete_bookings(data, ids):
-    ids = set(ids)
-    old = len(data.get("bookings", []))
-    data["bookings"] = [b for b in data.get("bookings", []) if b.get("id") not in ids]
-    return old - len(data["bookings"])
+def create_pdf(r):
+    pdf = FPDF()
+    pdf.add_page()
 
-
-# -----------------------------
-# Archive / export
-# -----------------------------
-
-def archive_df(data):
-    rows = []
-    for b in data.get("bookings", []):
-        c = get_client(data, b.get("client_id"))
-        rows.append({
-            "Elimina": False,
-            "Data": date_label_it(b.get("date")),
-            "Data ISO": b.get("date", ""),
-            "Ora": b.get("time", ""),
-            "Cliente": full_name(c) if c else b.get("name", ""),
-            "Telefono": (c or {}).get("phone", b.get("phone", "")),
-            "Email": (c or {}).get("email", b.get("email", "")),
-            "Istruttrice": b.get("instructor", ""),
-            "Stato": b.get("status", ""),
-            "Importo": money(b.get("amount", 0)),
-            "Pagato": bool(b.get("paid", False)),
-            "Note cliente": (c or {}).get("notes", ""),
-            "ID": b.get("id"),
-            "Client ID": b.get("client_id"),
-        })
-    cols = ["Elimina", "Data", "Data ISO", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Importo", "Pagato", "Note cliente", "ID", "Client ID"]
-    if not rows:
-        return pd.DataFrame(columns=cols)
-    df = pd.DataFrame(rows)
-    df["_sort"] = pd.to_datetime(df["Data ISO"], errors="coerce")
-    return df.sort_values(["Cliente", "_sort", "Ora"]).drop(columns=["_sort"]).reset_index(drop=True)
-
-
-def period_range(opt):
-    today = date.today()
-    if opt == "Anno in corso":
-        return date(today.year, 1, 1), date(today.year, 12, 31)
-    if opt == "Ultimi 3 mesi":
-        return today - timedelta(days=90), today
-    if opt == "Ultimi 6 mesi":
-        return today - timedelta(days=180), today
-    if opt == "Ultimo anno":
-        return today - timedelta(days=365), today
-    return today.replace(day=1), today
-
-
-def filter_period(df, start, end):
-    if df.empty:
-        return df.copy()
-    dd = pd.to_datetime(df["Data ISO"], errors="coerce").dt.date
-    return df[(dd >= start) & (dd <= end)].copy()
-
-
-def summary(df):
-    if df.empty:
-        return 0, 0, 0, pd.DataFrame(columns=["Istruttrice", "Totale complessivo", "Totale pagato", "Totale non pagato"])
-    w = df.copy()
-    w["Importo"] = pd.to_numeric(w["Importo"], errors="coerce").fillna(0)
-    w = w[w["Stato"] != "Annullata"]
-    total = float(w["Importo"].sum())
-    paid = float(w.loc[w["Pagato"] == True, "Importo"].sum())
-    rows = []
-    for i in INSTRUCTORS:
-        s = w[w["Istruttrice"] == i]
-        it = float(s["Importo"].sum())
-        ip = float(s.loc[s["Pagato"] == True, "Importo"].sum())
-        rows.append({"Istruttrice": i, "Totale complessivo": it, "Totale pagato": ip, "Totale non pagato": it - ip})
-    return total, paid, total - paid, pd.DataFrame(rows)
-
-
-def update_archive(data, edited_df):
-    n = 0
-    by_id = {b.get("id"): b for b in data.get("bookings", [])}
-    for _, r in edited_df.iterrows():
-        b = by_id.get(r.get("ID"))
-        if not b:
-            continue
-        changed = False
-        vals = {"amount": money(r.get("Importo", 0)), "paid": to_bool(r.get("Pagato", False))}
-        for k, v in vals.items():
-            if b.get(k) != v:
-                b[k] = v
-                changed = True
-        c = get_client(data, r.get("Client ID"))
-        if c:
-            email = str(r.get("Email", "") or "").strip()
-            note_cliente = str(r.get("Note cliente", "") or "").strip()
-            if c.get("email", "") != email:
-                c["email"] = email
-                b["email"] = email
-                changed = True
-            if c.get("notes", "") != note_cliente:
-                c["notes"] = note_cliente
-                changed = True
-        if changed:
-            n += 1
-    return n
-
-
-def make_excel(df):
-    bio = BytesIO()
-    export = df.drop(columns=["Elimina", "ID", "Client ID", "Data ISO"], errors="ignore")
-    with pd.ExcelWriter(bio, engine="openpyxl") as writer:
-        export.to_excel(writer, index=False, sheet_name="Archivio")
-        ws = writer.sheets["Archivio"]
-        for col in ws.columns:
-            ws.column_dimensions[col[0].column_letter].width = min(max(max(len(str(c.value)) if c.value is not None else 0 for c in col) + 2, 10), 38)
-    bio.seek(0)
-    return bio.getvalue()
-
-
-def make_pdf(df, label=""):
-    bio = BytesIO()
-    doc = SimpleDocTemplate(bio, pagesize=landscape(A4), rightMargin=.6*cm, leftMargin=.6*cm, topMargin=.7*cm, bottomMargin=.7*cm)
-    styles = getSampleStyleSheet()
-    elems = []
-    if Path(LOGO_PATH).exists():
-        elems.append(Image(LOGO_PATH, width=2.0*cm, height=3.0*cm))
-    elems += [Paragraph("Archivio prenotazioni Pilates - Body Center", styles["Title"]), Paragraph(label, styles["Normal"]), Spacer(1, .25*cm)]
-
-    total, paid, unpaid, per = summary(df)
-    incassi = [["Riepilogo incassi", "Importo"], ["Totale complessivo", f"€ {total:.2f}"], ["Totale pagato", f"€ {paid:.2f}"], ["Totale non pagato", f"€ {unpaid:.2f}"]]
-    inc_tab = Table(incassi, colWidths=[6*cm, 4*cm])
-    inc_tab.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(GREEN)), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("GRID", (0, 0), (-1, -1), .25, colors.lightgrey), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold")]))
-    elems += [inc_tab, Spacer(1, .25*cm)]
-
-    per_rows = [["Istruttrice", "Totale complessivo", "Totale pagato", "Totale non pagato"]]
-    for _, r in per.iterrows():
-        per_rows.append([r["Istruttrice"], f"€ {money(r['Totale complessivo']):.2f}", f"€ {money(r['Totale pagato']):.2f}", f"€ {money(r['Totale non pagato']):.2f}"])
-    per_tab = Table(per_rows, colWidths=[4*cm, 4*cm, 4*cm, 4*cm])
-    per_tab.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#6f8f68")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("GRID", (0, 0), (-1, -1), .25, colors.lightgrey), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold")]))
-    elems += [per_tab, Spacer(1, .35*cm)]
-
-    cols = ["Data", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Importo", "Pagato", "Note cliente"]
-    pdf = df[cols].copy() if not df.empty else pd.DataFrame(columns=cols)
-    pdf["Pagato"] = pdf["Pagato"].map(lambda x: "Sì" if to_bool(x) else "No")
-    pdf["Importo"] = pdf["Importo"].map(lambda x: f"€ {money(x):.2f}")
-    table_data = [cols] + pdf.fillna("").astype(str).values.tolist()
-    tab = Table(table_data, repeatRows=1)
-    tab.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(GREEN)), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("GRID", (0, 0), (-1, -1), .25, colors.lightgrey), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold")]))
-    elems.append(tab)
-    doc.build(elems)
-    bio.seek(0)
-    return bio.getvalue()
-
-
-# -----------------------------
-# UI
-# -----------------------------
-
-def app_css():
-    st.markdown(f"""
-    <style>
-    [data-testid="stSidebar"], [data-testid="collapsedControl"] {{ display:none !important; }}
-    .stApp {{ background:#fbfcfb; }}
-    .block-container {{ padding-top:1rem !important; max-width:1240px !important; }}
-    div[data-testid="stMetric"] {{ background:#fff; border:1px solid #e6e9e6; border-radius:14px; padding:12px; }}
-    div[data-testid="stRadio"] > div {{ gap:.65rem !important; flex-wrap:wrap !important; }}
-    div[data-testid="stRadio"] label {{ min-height:42px !important; padding:.55rem 1rem !important; border-radius:999px !important; border:1px solid #dce6dc !important; background:#fff !important; box-shadow:0 3px 10px rgba(36,49,66,.045) !important; }}
-    div[data-testid="stRadio"] input[type="radio"] {{ display:none !important; }}
-    div[data-testid="stRadio"] label:has(input:checked) {{ background:{GREEN} !important; border-color:{GREEN} !important; }}
-    div[data-testid="stRadio"] label:has(input:checked) p {{ color:#fff !important; }}
-    @media (max-width:760px) {{
-        .block-container {{ padding-left:.65rem !important; padding-right:.65rem !important; padding-top:.45rem !important; max-width:100% !important; }}
-        h1 {{ font-size:1.75rem !important; line-height:1.08 !important; }}
-        img {{ max-width:88px !important; height:auto !important; }}
-        div[data-testid="stRadio"] > div {{ display:grid !important; grid-template-columns:1fr 1fr !important; gap:.45rem !important; }}
-        div[data-testid="stRadio"] label {{ width:100% !important; min-height:42px !important; padding:.45rem .55rem !important; border-radius:14px !important; overflow:visible !important; }}
-        div[data-testid="stRadio"] label p {{ font-size:.86rem !important; font-weight:800 !important; white-space:normal !important; overflow:visible !important; text-overflow:clip !important; line-height:1.1 !important; }}
-    }}
-    </style>
-    """, unsafe_allow_html=True)
-
-
-def login():
-    if st.session_state.get("authenticated", False):
-        return True
-    left, center, right = st.columns([1.4, 1.2, 1.4])
-    with center:
-        st.markdown("### Accesso staff")
-        st.caption("Inserisci la password per accedere al gestionale.")
-        pwd = st.text_input("Password", type="password", key="main_login_password")
-        if st.button("Accedi", type="primary", use_container_width=True):
-            if pwd == get_secret("APP_PASSWORD", "pilates123"):
-                st.session_state["authenticated"] = True
-                st.rerun()
-            else:
-                st.error("Password non corretta")
-    return False
-
-
-def render_header():
-    logo_html = ""
-    if Path(LOGO_PATH).exists():
-        logo_b64 = base64.b64encode(Path(LOGO_PATH).read_bytes()).decode("ascii")
-        logo_html = f"<img src='data:image/png;base64,{logo_b64}' style='width:118px;height:118px;object-fit:contain;'>"
-    st.markdown(f"""
-    <div style='display:flex;align-items:center;gap:22px;background:linear-gradient(135deg,#f8fbf8 0%,#eef6f1 100%);border:1px solid #dfe8df;border-radius:24px;padding:18px 22px;margin:4px 0 16px 0;box-shadow:0 8px 24px rgba(36,49,66,.06);'>
-        <div>{logo_html}</div>
-        <div>
-            <h1 style='margin:0;color:#243142;font-size:clamp(2rem,4vw,3rem);font-weight:850;line-height:1.04;letter-spacing:-.035em;'>Prenotazioni Pilates Reformer</h1>
-            <p style='margin:7px 0 0 0;color:#6f7780;font-size:1rem;'>Gestionale interno Body Center · clienti, prenotazioni, pagamenti</p>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-def save_and_rerun(data, sha, message):
-    save_data(data, sha, message)
-    st.rerun()
-
-
-def render_client_form(data, sha, cid, prefix, close_key=None):
-    c = get_client(data, cid)
-    if not c:
-        st.error("Cliente non trovato.")
-        return
-
-    st.markdown(f"### Scheda cliente: {full_name(c)}")
-    a, b = st.columns(2)
-    last = a.text_input("Cognome", value=c.get("last_name", ""), key=f"{prefix}_last_{cid}")
-    first = b.text_input("Nome", value=c.get("first_name", ""), key=f"{prefix}_first_{cid}")
-    a, b, c3 = st.columns(3)
-    phone = a.text_input("Telefono", value=c.get("phone", ""), key=f"{prefix}_phone_{cid}")
-    email = b.text_input("Email", value=c.get("email", ""), key=f"{prefix}_email_{cid}")
-    birth = c3.text_input("Data di nascita", value=date_it(c.get("birth_date", "")), placeholder="gg-mm-aaaa", key=f"{prefix}_birth_{cid}")
-    st.caption(f"Età: {age_from_birth(birth) if birth else ''}")
-    notes = st.text_area("Note cliente", value=c.get("notes", ""), key=f"{prefix}_notes_{cid}")
-    anam = st.text_area("Anamnesi / problematiche", value=c.get("anamnesis", ""), height=140, key=f"{prefix}_anam_{cid}")
-    goals = st.text_area("Obiettivi", value=c.get("goals", ""), height=100, key=f"{prefix}_goals_{cid}")
-
-    if st.button("Salva scheda cliente", type="primary", key=f"{prefix}_save_{cid}", use_container_width=is_mobile_client()):
-        ok, msg = update_client_record(data, cid, first, last, phone, email, birth, notes, anam, goals)
-        if ok:
-            if close_key:
-                st.session_state.pop(close_key, None)
-            save_data(data, sha, "Update client record")
-            st.success(msg)
-            st.rerun()
-        else:
-            st.error(msg)
-
-    if not is_mobile_client():
-        hist = []
-        for bkg in data.get("bookings", []):
-            if bkg.get("client_id") == cid:
-                hist.append({"Data": date_it(bkg.get("date")), "Ora": bkg.get("time"), "Istruttrice": bkg.get("instructor"), "Stato": bkg.get("status"), "Importo": money(bkg.get("amount", 0)), "Pagato": bool(bkg.get("paid", False)), "Note prenotazione": bkg.get("note", "")})
-        if hist:
-            st.markdown("#### Storico lezioni")
-            st.dataframe(pd.DataFrame(hist).sort_values(["Data", "Ora"]), use_container_width=True, hide_index=True)
-
-
-def render_week(data, sha):
-    st.subheader("Vista settimanale")
-    today = date.today()
-    start = max(parse_date(st.date_input("Scegli la data di partenza", value=today, min_value=today, format="DD/MM/YYYY")), today)
-    for d in next_days(start, 5):
-        st.markdown(f"### {DAY_NAMES[d.weekday()]} {d.strftime('%d/%m/%Y')}")
-        cols = st.columns(3)
-        for i, t in enumerate(times_for(d)):
-            with cols[i % 3]:
-                n, _, conf, wait = slot_status(data, d, t)
-                label = f"{t} — {n}/{CAPACITY}"
-                st.error(label) if n >= CAPACITY else st.info(label) if n == 0 else st.success(label)
-                for j, bkg in enumerate(conf, 1):
-                    st.write(f"{j}. {bkg.get('name','')} · {bkg.get('instructor','')} · € {money(bkg.get('amount',0)):.2f} · {'pagato' if bkg.get('paid') else 'non pagato'}")
-                if wait:
-                    st.caption("Lista d'attesa:")
-                    for bkg in wait:
-                        st.caption(f"• {bkg.get('name','')} · {bkg.get('phone','')}")
-                with st.expander("Gestisci"):
-                    for bkg in slot_rows(data, d, t, True):
-                        st.markdown(f"**{status_icon(bkg.get('status'))} {bkg.get('name','')}** — {bkg.get('phone','')}")
-                        a, b2, c = st.columns(3)
-                        if a.button("Conferma", key=f"c{bkg['id']}") and change_status(data, bkg["id"], "Confermata"):
-                            save_and_rerun(data, sha, "Conferma")
-                        if b2.button("Attesa", key=f"w{bkg['id']}") and change_status(data, bkg["id"], "Lista attesa"):
-                            save_and_rerun(data, sha, "Attesa")
-                        if c.button("Annulla", key=f"x{bkg['id']}") and change_status(data, bkg["id"], "Annullata"):
-                            save_and_rerun(data, sha, "Annulla")
-
-
-def render_booking(data, sha):
-    st.subheader("Prenota")
-    mode = st.radio("Cliente", ["Seleziona da archivio", "Nuovo cliente"], horizontal=True)
-    cid = None
-    if mode == "Seleziona da archivio":
-        opts = client_options(data)
-        if opts:
-            cid = option_to_client_id(st.selectbox("Cliente", opts))
-            c = get_client(data, cid)
-            st.caption(f"Telefono: {c.get('phone','')} · Email: {c.get('email','')}")
-        else:
-            st.warning("Nessun cliente in archivio.")
+    if os.path.exists(LOGO_PATH):
+        try:
+            pdf.image(LOGO_PATH, 10, 8, 45)
+            pdf.ln(30)
+        except Exception:
+            pdf.ln(10)
     else:
-        a, b = st.columns(2)
-        last = a.text_input("Cognome")
-        first = b.text_input("Nome")
-        c, d = st.columns(2)
-        phone = c.text_input("Telefono")
-        email = d.text_input("Email")
-        birth = st.text_input("Data di nascita", placeholder="gg-mm-aaaa")
-        notes = st.text_area("Note cliente")
-        if st.button("Salva nuovo cliente"):
-            ok, msg, cid = add_client(data, first, last, phone, email, notes, birth)
-            if ok:
-                save_and_rerun(data, sha, "Add client")
-            else:
-                st.error(msg)
+        pdf.ln(10)
 
-    if cid:
-        st.markdown("### Dati prenotazione")
-        a, b = st.columns(2)
-        d = parse_date(a.date_input("Data", value=date.today(), min_value=date.today(), format="DD/MM/YYYY", key="booking_date"))
-        ts = times_for(d)
-        if not ts:
-            st.warning("Nessun orario previsto per questa data.")
-            return
-        t = b.selectbox("Orario", ts)
-        a, b, c = st.columns(3)
-        amount = a.number_input("Importo (€)", min_value=0.0, value=0.0, step=1.0, format="%.2f")
-        paid = b.checkbox("Pagato")
-        instr = c.selectbox("Istruttrice", INSTRUCTORS)
-        note = st.text_area("Note prenotazione")
-        st.info(f"Stato automatico: {auto_status(data, d, t)}")
-        if st.button("Salva prenotazione", type="primary"):
-            bk = create_booking(data, cid, d, t, amount, paid, instr, note)
-            st.session_state["_next_section"] = "Archivio"
-            save_and_rerun(data, sha, f"Add booking {bk['name']}")
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, pdf_safe(f"REPORT PERFORMANCE: {r['nome']} {r['cognome']}"), 0, 1, "C")
+    pdf.set_font("Arial", "", 11)
+    pdf.cell(0, 7, pdf_safe(f"Data: {r['data']} | Profilo: {r['profilo']} | Altezza: {r['altezza']:.0f} cm"), 0, 1, "C")
+    pdf.ln(8)
+
+    pdf.set_fill_color(230, 230, 230)
+
+    def section(title):
+        pdf.ln(4)
+        pdf.set_font("Arial", "B", 12)
+        pdf.cell(0, 9, pdf_safe(title), 1, 1, "L", True)
+        pdf.set_font("Arial", "", 10)
+
+    section("1. PARAMETRI ANTROPOMETRICI")
+    pdf.cell(63, 8, pdf_safe(f"Peso attuale: {r['peso_att']:.1f} kg"), 1)
+    pdf.cell(63, 8, pdf_safe(f"FM attuale: {r['fm_att']:.1f}%"), 1)
+    pdf.cell(64, 8, pdf_safe(f"BMI attuale: {r['bmi_att']:.1f}"), 1, 1)
+    pdf.cell(63, 8, pdf_safe(f"Peso target: {r['peso_tar']:.1f} kg"), 1)
+    pdf.cell(63, 8, pdf_safe(f"FM target: {r['fm_tar']:.1f}%"), 1)
+    pdf.cell(64, 8, pdf_safe(f"BMI target: {r['bmi_tar']:.1f}"), 1, 1)
+
+    section("2. VALUTAZIONE FUNZIONALE")
+    pdf.cell(63, 8, pdf_safe(f"Protocollo: {r['tipo_test']}"), 1)
+    pdf.cell(63, 8, pdf_safe(f"FTP attuale: {r['ftp_att']:.0f} W"), 1)
+    pdf.cell(64, 8, pdf_safe(f"FTP target: {r['ftp_tar']:.0f} W"), 1, 1)
+    pdf.cell(63, 8, pdf_safe(f"W/kg attuale: {r['wkg_att']:.2f}"), 1)
+    pdf.cell(63, 8, pdf_safe(f"W/kg target: {r['wkg_tar']:.2f}"), 1)
+    pdf.cell(64, 8, pdf_safe(f"Delta W/kg: {r['wkg_delta']:+.2f}"), 1, 1)
+
+    section("3. SCENARIO SALITA")
+    pdf.cell(0, 8, pdf_safe(f"Parametri: {r['dist']:.1f} km | {r['grad']:.1f}% | Bici {r['bike']:.1f} kg"), 1, 1)
+    pdf.cell(95, 8, pdf_safe(f"Tempo attuale: {r['tempo_att']:.2f} min"), 1)
+    pdf.cell(95, 8, pdf_safe(f"Tempo target: {r['tempo_tar']:.2f} min"), 1, 1)
+    pdf.set_font("Arial", "B", 10)
+    pdf.cell(0, 8, pdf_safe(f"Differenza: {r['tempo_delta']:+.2f} min"), 1, 1, "C")
+
+    for title, zones, c2, c3 in [
+        ("4. ZONE DI POTENZA - FTP ATTUALE", r["zones_power_att"], "Watt Min", "Watt Max"),
+        ("5. ZONE DI POTENZA - FTP TARGET", r["zones_power_tar"], "Watt Min", "Watt Max"),
+        ("6. ZONE CARDIACHE - FTHR / LTHR", r["zones_hr"], "BPM Min", "BPM Max"),
+    ]:
+        section(title)
+        pdf.set_font("Arial", "B", 9)
+        pdf.cell(80, 7, "Zona", 1)
+        pdf.cell(55, 7, c2, 1)
+        pdf.cell(55, 7, c3, 1, 1)
+        pdf.set_font("Arial", "", 9)
+        for z in zones:
+            pdf.cell(80, 7, pdf_safe(z[0]), 1)
+            pdf.cell(55, 7, str(z[1]), 1)
+            pdf.cell(55, 7, str(z[2]), 1, 1)
+
+    return pdf.output(dest="S").encode("latin-1", "ignore")
 
 
-def render_clients(data, sha):
-    st.subheader("Clienti")
-    with st.expander("➕ Inserisci nuovo cliente"):
-        a, b = st.columns(2)
-        last = a.text_input("Cognome", key="new_client_last")
-        first = b.text_input("Nome", key="new_client_first")
-        c, d = st.columns(2)
-        phone = c.text_input("Telefono", key="new_client_phone")
-        email = d.text_input("Email", key="new_client_email")
-        birth = st.text_input("Data di nascita", placeholder="gg-mm-aaaa", key="new_client_birth")
-        notes = st.text_area("Note cliente", key="new_client_notes")
-        if st.button("Salva cliente"):
-            ok, msg, _ = add_client(data, first, last, phone, email, notes, birth)
-            if ok:
-                save_and_rerun(data, sha, "Add client")
-            else:
-                st.error(msg)
+# =========================================================
+# SALVATAGGIO / UPDATE
+# =========================================================
+def salva_visita(r):
+    nome = r["nome"].strip()
+    cognome = r["cognome"].strip()
+    atleta_id_esistente = r.get("atleta_id_esistente")
 
-    sort_by = st.radio("Ordina per", ["Alfabetico", "Ultima visita"], horizontal=True, key="client_sort")
-    dfc = clients_df(data, sort_by)
-    if dfc.empty:
-        st.info("Nessun cliente presente.")
-        return
-    q = st.text_input("Cerca cliente").lower().strip()
-    view = dfc[dfc.apply(lambda r: q in " ".join(map(str, r.values)).lower(), axis=1)] if q else dfc
+    with get_connection() as conn:
+        cur = conn.cursor()
 
-    if is_mobile_client():
-        open_cid = st.session_state.get("client_open_id")
-        if open_cid:
-            if st.button("← Torna ai clienti", use_container_width=True, key="client_mobile_back"):
-                st.session_state.pop("client_open_id", None)
-                st.rerun()
-            render_client_form(data, sha, open_cid, prefix="clienti_mobile", close_key="client_open_id")
-            return
-        for _, r in view.iterrows():
-            cid = r.get("ID")
-            c = get_client(data, cid) or {}
-            with st.container(border=True):
-                st.markdown(f"**{full_name(c)}**")
-                st.caption(f"📅 Ultima lezione: {r.get('Ultima lezione') or 'Nessuna'}")
-                if c.get("phone"):
-                    st.markdown(f"📞 [{c.get('phone')}](tel:{c.get('phone')})")
-                if c.get("email"):
-                    st.caption(f"✉️ {c.get('email')}")
-                if st.button("Apri scheda cliente", key=f"client_mobile_open_{cid}", use_container_width=True):
-                    st.session_state["client_open_id"] = cid
-                    st.rerun()
-        return
+        if atleta_id_esistente is None:
+            # Nuovo atleta: crea sempre una nuova scheda atleta
+            cur.execute(
+                "INSERT INTO atleti (nome, cognome, altezza, profilo) VALUES (?, ?, ?, ?)",
+                (nome, cognome, r["altezza"], r["profilo"]),
+            )
+            atleta_id = cur.lastrowid
+        else:
+            # Atleta esistente: aggiunge una nuova visita alla stessa scheda atleta
+            atleta_id = int(atleta_id_esistente)
+            cur.execute(
+                "UPDATE atleti SET nome=?, cognome=?, altezza=?, profilo=? WHERE id=?",
+                (nome, cognome, r["altezza"], r["profilo"], atleta_id),
+            )
 
-    display = view.drop(columns=["ID", "_last"], errors="ignore")
-    st.dataframe(display, use_container_width=True, hide_index=True)
-    opts = ["—"] + [f"{r.Cognome} {r.Nome} | {r.ID}" for _, r in view.iterrows()]
-    choice = st.selectbox("Apri scheda cliente", opts)
-    if choice != "—":
-        cid = choice.split("|")[-1].strip()
+        cur.execute(
+            """
+            INSERT INTO visite (
+                atleta_id, data, peso, fm, ftp, lthr, peso_t, fm_t, ftp_t,
+                dist_km, grad, bike_w, t_att, t_tar, wkg_att, wkg_tar
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                atleta_id,
+                r["data_iso"],
+                r["peso_att"],
+                r["fm_att"],
+                r["ftp_att"],
+                r["lthr"],
+                r["peso_tar"],
+                r["fm_tar"],
+                r["ftp_tar"],
+                r["dist"],
+                r["grad"],
+                r["bike"],
+                r["tempo_att"],
+                r["tempo_tar"],
+                r["wkg_att"],
+                r["wkg_tar"],
+            ),
+        )
+        conn.commit()
+
+
+def aggiorna_atleta(atleta_id, nome, cognome, altezza, profilo):
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE atleti SET nome=?, cognome=?, altezza=?, profilo=? WHERE id=?",
+            (nome.strip(), cognome.strip(), altezza, profilo, int(atleta_id)),
+        )
+        conn.commit()
+
+
+def aggiorna_visita(visita_id, peso, fm, ftp, lthr, peso_t, fm_t, ftp_t, dist, grad, bike):
+    t_att = BioPerformance.estimate_time(ftp, peso, dist, grad, bike)
+    t_tar = BioPerformance.estimate_time(ftp_t, peso_t, dist, grad, bike)
+    wkg_att = ftp / peso if peso > 0 else 0
+    wkg_tar = ftp_t / peso_t if peso_t > 0 else 0
+
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE visite
+            SET peso=?, fm=?, ftp=?, lthr=?, peso_t=?, fm_t=?, ftp_t=?,
+                dist_km=?, grad=?, bike_w=?, t_att=?, t_tar=?, wkg_att=?, wkg_tar=?
+            WHERE id=?
+            """,
+            (
+                peso, fm, ftp, lthr, peso_t, fm_t, ftp_t,
+                dist, grad, bike, t_att, t_tar, wkg_att, wkg_tar, int(visita_id),
+            ),
+        )
+        conn.commit()
+
+
+# =========================================================
+# SIDEBAR
+# =========================================================
+with st.sidebar:
+    if os.path.exists(LOGO_PATH):
+        st.image(LOGO_PATH, use_container_width=True)
+    st.markdown("---")
+    menu = st.radio("NAVIGAZIONE", ["➕ Nuova Valutazione", "📂 Archivio & Edit"])
+
+
+# =========================================================
+# NUOVA VALUTAZIONE
+# =========================================================
+if menu == "➕ Nuova Valutazione":
+    st.header("📋 Inserimento Protocollo Valutazione")
+
+    with st.container(border=True):
+        st.subheader("👤 Anagrafica atleta")
+        db_atleti = get_all_atleti()
+
+        modalita = st.radio(
+            "Modalità inserimento",
+            ["Nuovo atleta", "Nuova analisi per atleta già esistente"],
+            horizontal=True,
+            key="modalita_inserimento",
+        )
+
+        atleta_id_esistente = None
+
+        if modalita == "Nuova analisi per atleta già esistente" and not db_atleti.empty:
+            db_atleti = db_atleti.copy()
+            db_atleti["label"] = db_atleti.apply(lambda x: f"{x['id']} - {x['cognome']} {x['nome']}", axis=1)
+            atleta_label = st.selectbox("Seleziona atleta esistente", db_atleti["label"].tolist())
+            atleta_id_esistente = int(atleta_label.split(" - ")[0])
+            atleta_row = db_atleti[db_atleti["id"] == atleta_id_esistente].iloc[0]
+
+            c1, c2, c3, c4 = st.columns([2, 2, 1, 2])
+            cognome = c1.text_input("Cognome", value=str(atleta_row["cognome"]), key=f"cognome_existing_{atleta_id_esistente}").strip()
+            nome = c2.text_input("Nome", value=str(atleta_row["nome"]), key=f"nome_existing_{atleta_id_esistente}").strip()
+            altezza = c3.number_input("Altezza (cm)", 120, 230, int(atleta_row["altezza"]) if pd.notna(atleta_row["altezza"]) else 175, 1, key=f"altezza_existing_{atleta_id_esistente}")
+            profilo = c4.selectbox(
+                "Profilo atleta",
+                PROFILI,
+                index=PROFILI.index(atleta_row["profilo"]) if atleta_row["profilo"] in PROFILI else 0,
+                key=f"profilo_existing_{atleta_id_esistente}",
+            )
+
+        else:
+            if modalita == "Nuova analisi per atleta già esistente" and db_atleti.empty:
+                st.warning("Non sono presenti atleti in archivio. Verrà creato un nuovo atleta.")
+
+            c1, c2, c3, c4 = st.columns([2, 2, 1, 2])
+            cognome = c1.text_input("Cognome", value="", key="cognome_new_input").strip()
+            nome = c2.text_input("Nome", value="", key="nome_new_input").strip()
+            altezza = c3.number_input("Altezza (cm)", 120, 230, 175, 1, key="altezza_new_input")
+            profilo = c4.selectbox("Profilo atleta", PROFILI, key="profilo_new_input")
+
+        data_visita = st.date_input("Data analisi", value=date.today(), key="data_visita_input")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.subheader("📊 1. Stato attuale")
+        p_att = st.number_input("Peso attuale (kg)", 40.0, 150.0, 70.0, 0.1, key="p_att_input")
+        fm_att = st.number_input("FM attuale (%)", 3.0, 45.0, 15.0, 0.1, key="fm_att_input")
+        tipo_test = st.selectbox("Tipo test FTP", TIPI_TEST, key="tipo_test_input")
+        val_test = st.number_input("Watt test / FTP manuale", 50, 700, 250, 1, key="val_test_input")
+        ftp_att = BioPerformance.calculate_ftp(tipo_test, val_test)
+        lthr = st.number_input("FTHR / LTHR (bpm)", 80, 220, 160, 1, key="lthr_input")
+
+    with col2:
+        st.subheader("🎯 2. Target")
+        p_tar = st.number_input("Peso target (kg)", 40.0, 150.0, 68.0, 0.1, key="p_tar_input")
+        fm_tar = st.number_input("FM target (%)", 3.0, 40.0, 10.0, 0.1, key="fm_tar_input")
+        ftp_tar = st.number_input("FTP target (W)", 50, 700, 280, 1, key="ftp_tar_input")
+
+    with col3:
+        st.subheader("🏔️ 3. Scenario salita")
+        dist = st.number_input("Km salita", 0.1, 50.0, 10.0, 0.1, key="dist_input")
+        grad = st.number_input("Pendenza media (%)", 0.0, 25.0, 7.0, 0.1, key="grad_input")
+        bike = st.number_input("Peso bici (kg)", 5.0, 20.0, 7.5, 0.1, key="bike_input")
+
+    if st.button("🚀 ELABORA E STAMPA OUTPUT", use_container_width=True):
+        if not nome or not cognome:
+            st.error("Inserire nome e cognome prima di elaborare.")
+            st.stop()
+
+        r = make_report_dict(
+            nome, cognome, altezza, profilo, data_visita.isoformat(),
+            p_att, fm_att, ftp_att, lthr, p_tar, fm_tar, ftp_tar,
+            dist, grad, bike, tipo_test=tipo_test,
+        )
+        r["atleta_id_esistente"] = atleta_id_esistente
+        st.session_state["rep"] = r
+
+    if "rep" in st.session_state:
+        r = st.session_state["rep"]
+
         st.divider()
-        render_client_form(data, sha, cid, prefix="clienti_pc")
+        st.subheader("🧬 Analisi Biometrica e Funzionale")
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Peso", f"{r['peso_att']:.1f} kg", f"Target: {r['peso_tar']:.1f} kg")
+        c1.write(f"**BMI:** {r['bmi_att']:.1f} → **{r['bmi_tar']:.1f}**")
+
+        fm_kg_att = r["peso_att"] * (r["fm_att"] / 100)
+        fm_kg_tar = r["peso_tar"] * (r["fm_tar"] / 100)
+        c2.metric("FM %", f"{r['fm_att']:.1f} %", f"Target: {r['fm_tar']:.1f} %")
+        c2.write(f"**Massa grassa:** {fm_kg_att:.1f} kg → **{fm_kg_tar:.1f} kg**")
+
+        c3.metric("FTP attuale", f"{r['ftp_att']:.0f} W", f"Target: {r['ftp_tar']:.0f} W")
+        c3.write(f"**Protocollo:** {r['tipo_test']}")
+
+        c4.metric("Rapporto W/kg", f"{r['wkg_att']:.2f}", f"Target: {r['wkg_tar']:.2f}")
+        c4.write(f"**Delta:** {r['wkg_delta']:+.2f} W/kg")
+
+        st.subheader("🏔️ Analisi Scenario Salita")
+        s1, s2 = st.columns(2)
+        s1.info(f"**Input:** {r['dist']:.1f} km | {r['grad']:.1f}% | Bici {r['bike']:.1f} kg")
+        s2.success(f"**Tempo attuale:** {r['tempo_att']:.2f} min  \n**Tempo target:** {r['tempo_tar']:.2f} min  \n**Differenza:** {r['tempo_delta']:+.2f} min")
+
+        st.subheader("⚡ Zone di Potenza Coggan - FTP attuale")
+        st.table(pd.DataFrame(r["zones_power_att"], columns=["Zona", "Watt Min", "Watt Max"]))
+
+        st.subheader("🎯 Zone di Potenza Coggan - FTP target")
+        st.table(pd.DataFrame(r["zones_power_tar"], columns=["Zona", "Watt Min", "Watt Max"]))
+
+        st.subheader("❤️ Zone Cardiache su FTHR / LTHR")
+        st.table(pd.DataFrame(r["zones_hr"], columns=["Zona", "BPM Min", "BPM Max"]))
+
+        st.subheader("🏁 Benchmark di Categoria")
+        st.table(BioPerformance.benchmarks())
+
+        save_col, pdf_col = st.columns(2)
+
+        with save_col:
+            if st.button("💾 SALVA IN ARCHIVIO", use_container_width=True):
+                salva_visita(r)
+                if r.get("atleta_id_esistente") is None:
+                    st.success(f"Nuovo atleta {r['nome']} {r['cognome']} creato e valutazione salvata correttamente.")
+                else:
+                    st.success(f"Nuova analisi di {r['nome']} {r['cognome']} salvata correttamente in archivio.")
+
+        with pdf_col:
+            st.download_button(
+                "📄 SCARICA PDF COMPLETO",
+                data=create_pdf(r),
+                file_name=f"Analisi_{r['cognome']}_{r['nome']}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
 
 
-def render_search(data):
-    st.subheader("Cerca")
-    q = st.text_input("Cerca per nome, telefono o email").lower().strip()
-    if not q:
-        return
-    dfa = archive_df(data)
-    res = dfa[dfa.apply(lambda r: q in " ".join(map(str, r.values)).lower(), axis=1)] if not dfa.empty else dfa
-    if res.empty:
-        st.info("Nessun risultato.")
-        return
-    if is_mobile_client():
-        for _, r in res.iterrows():
-            with st.container(border=True):
-                st.markdown(f"**{r.get('Cliente','')}**")
-                st.caption(f"📅 {r.get('Data','')} · 🕒 {r.get('Ora','')} · {r.get('Stato','')}")
-                st.caption(f"📞 {r.get('Telefono','')} · € {money(r.get('Importo',0)):.2f}")
-    else:
-        st.dataframe(res.drop(columns=["Elimina", "ID", "Client ID", "Data ISO"], errors="ignore"), use_container_width=True, hide_index=True)
+# =========================================================
+# ARCHIVIO & EDIT
+# =========================================================
+elif menu == "📂 Archivio & Edit":
 
+    # --- Inizializza stato navigazione archivio ---
+    if "archivio_atleta_id" not in st.session_state:
+        st.session_state["archivio_atleta_id"] = None
 
-def render_archive_mobile(df, data, sha):
-    open_cid = st.session_state.get("archive_open_client_id")
-    if open_cid:
-        if st.button("← Torna alle schede", key="archive_mobile_back", use_container_width=True):
-            st.session_state.pop("archive_open_client_id", None)
-            st.rerun()
-        render_client_form(data, sha, open_cid, prefix="archivio_mobile", close_key="archive_open_client_id")
-        return
+    atleti = get_all_atleti()
 
-    if df.empty:
-        st.info("Nessuna prenotazione nel filtro selezionato.")
-        return
+    if atleti.empty:
+        st.info("Nessun atleta presente in archivio.")
+        st.stop()
 
-    st.markdown("#### Schede archivio")
-    for i, (_, r) in enumerate(df.reset_index(drop=True).iterrows()):
-        cid = str(r.get("Client ID", "") or "")
-        bid = str(r.get("ID", i) or i)
-        with st.container(border=True):
-            st.markdown(f"**{r.get('Cliente','')}**")
-            st.caption(f"📅 {r.get('Data','')} · 🕒 {r.get('Ora','')} · {r.get('Stato','')}")
-            st.caption(f"👩‍🏫 {r.get('Istruttrice','')} · 💶 € {money(r.get('Importo',0)):.2f} · {'Pagato' if to_bool(r.get('Pagato', False)) else 'Non pagato'}")
-            tel = str(r.get("Telefono", "") or "")
-            email = str(r.get("Email", "") or "")
-            note = str(r.get("Note cliente", "") or "")
-            if tel:
-                st.markdown(f"📞 [{tel}](tel:{tel})")
-            if email:
-                st.caption(f"✉️ {email}")
-            if note:
-                st.caption(f"📝 {note}")
-            if cid:
-                if st.button("Apri scheda cliente", key=f"archive_mobile_open_{bid}_{i}", use_container_width=True):
-                    st.session_state["archive_open_client_id"] = cid
-                    st.rerun()
-
-
-def render_archive(data, sha):
-    st.subheader("Archivio, pagamenti e statistiche")
-    dfa = archive_df(data)
-    if dfa.empty:
-        st.info("Nessuna prenotazione presente.")
-        return
-
-    opt = st.selectbox("Scegli periodo", ["Anno in corso", "Mese selezionato", "Periodo personalizzato", "Ultimi 3 mesi", "Ultimi 6 mesi", "Ultimo anno"], index=0)
-    today = date.today()
-    if opt == "Mese selezionato":
-        m = parse_date(st.date_input("Mese di riferimento", value=today, format="DD/MM/YYYY"))
-        start = m.replace(day=1)
-        end = (start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
-    elif opt == "Periodo personalizzato":
-        a, b = st.columns(2)
-        start = parse_date(a.date_input("Dal", value=date(today.year, 1, 1), format="DD/MM/YYYY"))
-        end = parse_date(b.date_input("Al", value=date(today.year, 12, 31), format="DD/MM/YYYY"))
-    else:
-        start, end = period_range(opt)
-
-    dfp = filter_period(dfa, start, end)
-    label = f"Periodo: {start.strftime('%d-%m-%Y')} - {end.strftime('%d-%m-%Y')}"
-    st.caption(label)
-    total, paid, unpaid, per = summary(dfp)
-    a, b, c = st.columns(3)
-    a.metric("Totale complessivo", f"€ {total:.2f}")
-    b.metric("Totale pagato", f"€ {paid:.2f}")
-    c.metric("Totale non pagato", f"€ {unpaid:.2f}")
-
-    status = st.multiselect("Filtra stato archivio", ["Confermata", "Lista attesa", "Annullata"], default=["Confermata", "Lista attesa"])
-    only = st.checkbox("Mostra solo il periodo selezionato", value=True)
-    df = dfp.copy() if only else dfa.copy()
-    if status:
-        df = df[df["Stato"].isin(status)]
-
-    if is_mobile_client():
-        render_archive_mobile(df, data, sha)
-        return
-
-    st.dataframe(per, use_container_width=True, hide_index=True)
-    st.markdown("#### Modifica importi, pagamenti e note")
-    edit_cols = ["Elimina", "Data", "Ora", "Cliente", "Telefono", "Email", "Istruttrice", "Stato", "Importo", "Pagato", "Note cliente", "ID", "Client ID", "Data ISO"]
-    edited = st.data_editor(
-        df[edit_cols],
-        use_container_width=True,
-        hide_index=True,
-        disabled=["Data", "Ora", "Cliente", "Telefono", "Istruttrice", "Stato", "ID", "Client ID", "Data ISO"],
-        column_config={
-            "ID": None,
-            "Client ID": None,
-            "Data ISO": None,
-            "Importo": st.column_config.NumberColumn("Importo", format="€ %.2f"),
-        },
-        key=f"archive_editor_{st.session_state.get('archive_nonce', 0)}",
+    atleti = atleti.copy()
+    atleti["label"] = atleti.apply(
+        lambda x: f"{x['id']} - {x['cognome']} {x['nome']}",
+        axis=1
     )
 
-    a, b = st.columns(2)
-    if a.button("Salva modifiche importi/pagamenti/note"):
-        n = update_archive(data, edited)
-        if n:
-            st.session_state["archive_nonce"] = int(st.session_state.get("archive_nonce", 0)) + 1
-            save_and_rerun(data, sha, "Update archive")
-        else:
-            st.info("Nessuna modifica da salvare.")
+    # =====================================================
+    # VISTA LISTA ATLETI
+    # =====================================================
+    if st.session_state["archivio_atleta_id"] is None:
+        st.header("🗄️ Gestione Archivio")
+        st.subheader("🔎 Cerca atleta")
 
-    ids = edited.loc[edited.get("Elimina", False).apply(to_bool) == True, "ID"].dropna().astype(str).tolist() if not edited.empty else []
-    if b.button("Elimina selezionate", type="primary"):
-        if not ids:
-            st.error("Non hai selezionato nessuna prenotazione da eliminare.")
-        else:
-            n = delete_bookings(data, ids)
-            st.session_state["archive_nonce"] = int(st.session_state.get("archive_nonce", 0)) + 1
-            save_and_rerun(data, sha, "Delete bookings")
+        ricerca_atleta = st.text_input(
+            "Digita nome o cognome",
+            value="",
+            placeholder="Es. Rossi, Mario, Bramard...",
+            key="ricerca_atleta_archivio"
+        ).strip().lower()
 
-    opts = ["—"] + [f"{r.Cliente} | {r['Client ID']}" for _, r in df.dropna(subset=["Client ID"]).drop_duplicates("Client ID").iterrows()]
-    choice = st.selectbox("Apri scheda cliente", opts)
-    if choice != "—":
-        cid = choice.split("|")[-1].strip()
+        if ricerca_atleta:
+            atleti_filtrati = atleti[
+                atleti["nome"].astype(str).str.lower().str.contains(ricerca_atleta, na=False) |
+                atleti["cognome"].astype(str).str.lower().str.contains(ricerca_atleta, na=False)
+            ]
+        else:
+            atleti_filtrati = atleti
+
+        if atleti_filtrati.empty:
+            st.warning("Nessun atleta trovato con questa ricerca.")
+            st.stop()
+
+        st.markdown(f"**{len(atleti_filtrati)} atleti trovati**")
         st.divider()
-        render_client_form(data, sha, cid, prefix="archivio_pc")
 
-    a, b = st.columns(2)
-    a.download_button("Scarica Excel", data=make_excel(edited), file_name="prenotazioni_pilates.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    b.download_button("Scarica PDF archivio", data=make_pdf(edited, label), file_name="archivio_prenotazioni_pilates.pdf", mime="application/pdf")
+        for _, row in atleti_filtrati.iterrows():
+            col_nome, col_btn = st.columns([4, 1])
+            col_nome.markdown(f"**{row['cognome']} {row['nome']}**  \n{row['profilo']} | {row['altezza']} cm")
+            if col_btn.button("Apri →", key=f"open_{row['id']}", use_container_width=True):
+                st.session_state["archivio_atleta_id"] = int(row["id"])
+                st.rerun()
 
+        st.stop()
 
-# -----------------------------
-# App bootstrap
-# -----------------------------
+    # =====================================================
+    # VISTA SCHEDA ATLETA
+    # =====================================================
+    atleta_id = st.session_state["archivio_atleta_id"]
 
-st.set_page_config(page_title=APP_TITLE, page_icon="🧘", layout="wide", initial_sidebar_state="collapsed")
-app_css()
-render_header()
+    if st.button("← Torna all'archivio", use_container_width=False):
+        st.session_state["archivio_atleta_id"] = None
+        st.rerun()
 
-if not login():
-    st.stop()
+    atleta_row = atleti[atleti["id"] == atleta_id].iloc[0]
 
-try:
-    data, sha = load_data()
-    data = ensure_data(data)
-except Exception as e:
-    st.error(f"Errore caricamento dati: {e}")
-    st.stop()
+    st.header(f"👤 {atleta_row['cognome']} {atleta_row['nome']}")
+    st.caption(f"{atleta_row['profilo']} | {atleta_row['altezza']} cm")
 
-if not github_enabled():
-    st.warning("Modalità locale: per condivisione usa i Secrets GitHub su Streamlit.")
+    st.divider()
+    st.subheader("🧾 Modifica dati anagrafici atleta")
+    edit_cognome = st.text_input("Cognome atleta", value=str(atleta_row["cognome"]), key=f"edit_cognome_{atleta_id}")
+    edit_nome = st.text_input("Nome atleta", value=str(atleta_row["nome"]), key=f"edit_nome_{atleta_id}")
+    edit_altezza = st.number_input("Altezza atleta (cm)", 120, 230, int(atleta_row["altezza"]) if pd.notna(atleta_row["altezza"]) else 175, 1, key=f"edit_altezza_{atleta_id}")
+    edit_profilo = st.selectbox("Profilo atleta", PROFILI, index=PROFILI.index(atleta_row["profilo"]) if atleta_row["profilo"] in PROFILI else 0, key=f"edit_profilo_{atleta_id}")
 
-if "_next_section" in st.session_state:
-    st.session_state["section"] = st.session_state.pop("_next_section")
-if "section" not in st.session_state or st.session_state["section"] not in SECTIONS:
-    st.session_state["section"] = "Settimana"
+    if st.button("💾 AGGIORNA ANAGRAFICA ATLETA", use_container_width=True):
+        if not edit_nome.strip() or not edit_cognome.strip():
+            st.error("Nome e cognome non possono essere vuoti.")
+            st.stop()
+        aggiorna_atleta(atleta_id, edit_nome, edit_cognome, edit_altezza, edit_profilo)
+        st.success("Anagrafica atleta aggiornata correttamente.")
+        st.rerun()
 
-section = st.radio("Sezione", SECTIONS, horizontal=True, key="section", label_visibility="collapsed")
-if st.session_state.get("_last_section") != section:
-    st.session_state.pop("client_open_id", None)
-    st.session_state.pop("archive_open_client_id", None)
-    st.session_state["_last_section"] = section
-st.divider()
+    visite = get_visite(atleta_id)
 
-if section == "Settimana":
-    render_week(data, sha)
-elif section == "Prenota":
-    render_booking(data, sha)
-elif section == "Clienti":
-    render_clients(data, sha)
-elif section == "Cerca":
-    render_search(data)
-elif section == "Archivio":
-    render_archive(data, sha)
+    st.divider()
+    st.subheader("📋 Visite salvate")
+
+    if visite.empty:
+        st.warning("Nessuna visita registrata per questo atleta.")
+    else:
+        for _, v in visite.iterrows():
+            with st.expander(f"📅 {v['data']}  —  FTP: {int(v['ftp'])} W  |  W/kg: {v['wkg_att']:.2f}"):
+                st.markdown(
+                    f"**Peso:** {v['peso']:.1f} kg &nbsp;|&nbsp; **FM:** {v['fm']:.1f} % &nbsp;|&nbsp; **FTP:** {int(v['ftp'])} W &nbsp;|&nbsp; **LTHR:** {int(v['lthr'])} bpm  \n"
+                    f"**Peso target:** {v['peso_t']:.1f} kg &nbsp;|&nbsp; **FM target:** {v['fm_t']:.1f} % &nbsp;|&nbsp; **FTP target:** {int(v['ftp_t'])} W  \n"
+                    f"**W/kg:** {v['wkg_att']:.2f} → {v['wkg_tar']:.2f} &nbsp;|&nbsp; **Tempo att/tar:** {v['t_att']:.1f} / {v['t_tar']:.1f} min  \n"
+                    f"**Km:** {v['dist_km']:.1f} &nbsp;|&nbsp; **Pendenza:** {v['grad']:.1f}% &nbsp;|&nbsp; **Bici:** {v['bike_w']:.1f} kg"
+                )
+
+        st.divider()
+        st.subheader("✏️ Modifica visita salvata e sovrascrivi")
+
+        visita_id = st.selectbox("Seleziona ID visita da modificare", visite["id"].tolist(), key="visita_modifica_id")
+        visita_sel = visite[visite["id"] == visita_id].iloc[0]
+
+        st.markdown("**Stato attuale**")
+        nuovo_peso = st.number_input("Peso attuale (kg)", 40.0, 150.0, float(visita_sel["peso"]), 0.1, key=f"edit_peso_{visita_id}")
+        nuova_fm = st.number_input("FM attuale (%)", 3.0, 45.0, float(visita_sel["fm"]), 0.1, key=f"edit_fm_{visita_id}")
+        nuova_ftp = st.number_input("FTP attuale (W)", 50, 700, int(visita_sel["ftp"]), 1, key=f"edit_ftp_{visita_id}")
+        nuova_lthr = st.number_input("FTHR / LTHR (bpm)", 80, 220, int(visita_sel["lthr"]), 1, key=f"edit_lthr_{visita_id}")
+
+        st.markdown("**Target**")
+        nuovo_peso_t = st.number_input("Peso target (kg)", 40.0, 150.0, float(visita_sel["peso_t"]), 0.1, key=f"edit_peso_t_{visita_id}")
+        nuova_fm_t = st.number_input("FM target (%)", 3.0, 40.0, float(visita_sel["fm_t"]), 0.1, key=f"edit_fm_t_{visita_id}")
+        nuova_ftp_t = st.number_input("FTP target (W)", 50, 700, int(visita_sel["ftp_t"]), 1, key=f"edit_ftp_t_{visita_id}")
+
+        st.markdown("**Scenario salita**")
+        nuova_dist = st.number_input("Km salita", 0.1, 50.0, float(visita_sel["dist_km"]), 0.1, key=f"edit_dist_{visita_id}")
+        nuova_grad = st.number_input("Pendenza media (%)", 0.0, 25.0, float(visita_sel["grad"]), 0.1, key=f"edit_grad_{visita_id}")
+        nuova_bike = st.number_input("Peso bici (kg)", 5.0, 20.0, float(visita_sel["bike_w"]), 0.1, key=f"edit_bike_{visita_id}")
+
+        r_edit = make_report_dict(
+            edit_nome, edit_cognome, edit_altezza, edit_profilo, visita_sel["data"],
+            nuovo_peso, nuova_fm, nuova_ftp, nuova_lthr,
+            nuovo_peso_t, nuova_fm_t, nuova_ftp_t,
+            nuova_dist, nuova_grad, nuova_bike,
+            tipo_test="Archivio",
+        )
+
+        st.info(
+            f"Nuovo W/kg attuale: **{r_edit['wkg_att']:.2f}** | "
+            f"Nuovo W/kg target: **{r_edit['wkg_tar']:.2f}** | "
+            f"Tempo attuale: **{r_edit['tempo_att']:.2f} min** | "
+            f"Tempo target: **{r_edit['tempo_tar']:.2f} min**"
+        )
+
+        st.write("**Zone Coggan aggiornate - FTP attuale**")
+        st.table(pd.DataFrame(r_edit["zones_power_att"], columns=["Zona", "Watt Min", "Watt Max"]))
+        st.write("**Zone cardiache aggiornate**")
+        st.table(pd.DataFrame(r_edit["zones_hr"], columns=["Zona", "BPM Min", "BPM Max"]))
+
+        update_col, print_col = st.columns(2)
+        with update_col:
+            if st.button("💾 AGGIORNA VISITA SELEZIONATA", use_container_width=True):
+                aggiorna_visita(
+                    int(visita_id), nuovo_peso, nuova_fm, nuova_ftp, nuova_lthr,
+                    nuovo_peso_t, nuova_fm_t, nuova_ftp_t,
+                    nuova_dist, nuova_grad, nuova_bike,
+                )
+                st.success("Visita aggiornata e sovrascritta correttamente.")
+                st.rerun()
+
+        with print_col:
+            st.download_button(
+                "📄 RISTAMPA PDF VISITA SELEZIONATA",
+                data=create_pdf(r_edit),
+                file_name=f"Analisi_{edit_cognome}_{edit_nome}_visita_{visita_id}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
+
+        # ---------------------------------------------------------
+        # COMPARAZIONE TRA DUE VISITE
+        # ---------------------------------------------------------
+        if len(visite) >= 2:
+            st.divider()
+            st.subheader("📈 Comparazione tra due analisi")
+            st.write("Seleziona due visite dello stesso atleta e imposta una salita comune.")
+
+            visita_1_id = st.selectbox("Analisi iniziale", visite["id"].tolist(), key="comparazione_visita_1")
+            visita_2_id = st.selectbox("Analisi successiva", visite["id"].tolist(), key="comparazione_visita_2")
+
+            if visita_1_id == visita_2_id:
+                st.warning("Selezionare due visite diverse per effettuare la comparazione.")
+            else:
+                v1 = visite[visite["id"] == visita_1_id].iloc[0]
+                v2 = visite[visite["id"] == visita_2_id].iloc[0]
+
+                st.markdown("### 🏔️ Salita comune per la comparazione")
+                comp_dist = st.number_input("Km salita comparativa", 0.1, 100.0, float(v2["dist_km"]) if pd.notna(v2["dist_km"]) else 10.0, 0.1, key="comp_dist")
+                comp_grad = st.number_input("Pendenza media comparativa (%)", 0.0, 25.0, float(v2["grad"]) if pd.notna(v2["grad"]) else 7.0, 0.1, key="comp_grad")
+                comp_bike = st.number_input("Peso bici comparativo (kg)", 5.0, 20.0, float(v2["bike_w"]) if pd.notna(v2["bike_w"]) else 7.5, 0.1, key="comp_bike")
+
+                peso_1 = float(v1["peso"]); fm_1 = float(v1["fm"]); ftp_1 = float(v1["ftp"])
+                peso_2 = float(v2["peso"]); fm_2 = float(v2["fm"]); ftp_2 = float(v2["ftp"])
+                wkg_1 = ftp_1 / peso_1 if peso_1 else 0
+                wkg_2 = ftp_2 / peso_2 if peso_2 else 0
+                tempo_1 = BioPerformance.estimate_time(ftp_1, peso_1, comp_dist, comp_grad, comp_bike)
+                tempo_2 = BioPerformance.estimate_time(ftp_2, peso_2, comp_dist, comp_grad, comp_bike)
+
+                delta_peso = peso_2 - peso_1
+                delta_fm = fm_2 - fm_1
+                delta_ftp = ftp_2 - ftp_1
+                delta_wkg = wkg_2 - wkg_1
+                delta_tempo = tempo_2 - tempo_1
+                perc_ftp = (delta_ftp / ftp_1 * 100) if ftp_1 else 0
+                perc_wkg = (delta_wkg / wkg_1 * 100) if wkg_1 else 0
+                perc_tempo = (delta_tempo / tempo_1 * 100) if tempo_1 else 0
+
+                st.markdown("### 📊 Risultato comparativo")
+                st.metric("Peso", f"{peso_2:.1f} kg", f"{delta_peso:+.1f} kg")
+                st.metric("FM %", f"{fm_2:.1f} %", f"{delta_fm:+.1f} %")
+                st.metric("FTP", f"{ftp_2:.0f} W", f"{delta_ftp:+.0f} W / {perc_ftp:+.1f}%")
+                st.metric("W/kg", f"{wkg_2:.2f}", f"{delta_wkg:+.2f} / {perc_wkg:+.1f}%")
+
+                st.markdown("### 🏔️ Comparazione sulla stessa salita")
+                st.info(f"**Analisi iniziale** — {v1['data']}  \nPeso: {peso_1:.1f} kg | FTP: {ftp_1:.0f} W | W/kg: {wkg_1:.2f} | Tempo: **{tempo_1:.2f} min**")
+                st.success(f"**Analisi successiva** — {v2['data']}  \nPeso: {peso_2:.1f} kg | FTP: {ftp_2:.0f} W | W/kg: {wkg_2:.2f} | Tempo: **{tempo_2:.2f} min**")
+
+                if delta_tempo < 0:
+                    st.success(f"**Esito: MIGLIORAMENTO** — Tempo ridotto di {abs(delta_tempo):.2f} min ({abs(perc_tempo):.1f}%).")
+                elif delta_tempo > 0:
+                    st.error(f"**Esito: PEGGIORAMENTO** — Tempo aumentato di {delta_tempo:.2f} min ({perc_tempo:.1f}%).")
+                else:
+                    st.info("**Esito: INVARIATO** — Tempo stimato invariato.")
+
+                st.markdown("### 🧬 Interpretazione sintetica")
+                if delta_tempo < 0 and delta_wkg > 0:
+                    st.success("La seconda analisi mostra un miglioramento prestativo coerente: incremento del rapporto W/kg e riduzione del tempo stimato sulla salita comparativa.")
+                elif delta_tempo < 0 and delta_wkg <= 0:
+                    st.warning("La seconda analisi mostra un miglioramento del tempo stimato, ma senza incremento del rapporto W/kg. Verificare l'influenza della riduzione ponderale o dei parametri della simulazione.")
+                elif delta_tempo > 0 and delta_wkg < 0:
+                    st.error("La seconda analisi evidenzia un peggioramento prestativo: riduzione del rapporto W/kg e aumento del tempo stimato sulla salita comparativa.")
+                else:
+                    st.info("La variazione è contenuta o mista. Interpretare il dato considerando peso, FTP, massa grassa e coerenza del protocollo di test.")
+        else:
+            st.info("Per effettuare una comparazione sono necessarie almeno due visite salvate per lo stesso atleta.")
+
+    st.divider()
+    st.subheader("🗑️ Eliminazione dati")
+    d1, d2 = st.columns(2)
+
+    with d1:
+        if st.button("🗑️ ELIMINA ATLETA E TUTTE LE VISITE", use_container_width=True):
+            with get_connection() as conn:
+                conn.execute("DELETE FROM visite WHERE atleta_id=?", (atleta_id,))
+                conn.execute("DELETE FROM atleti WHERE id=?", (atleta_id,))
+                conn.commit()
+            st.success("Atleta eliminato correttamente.")
+            st.session_state["archivio_atleta_id"] = None
+            st.rerun()
+
+    with d2:
+        if not visite.empty:
+            visita_da_eliminare = st.selectbox("Seleziona visita da eliminare", visite["id"].tolist(), key="visita_da_eliminare")
+            if st.button("🗑️ ELIMINA SOLO VISITA", use_container_width=True):
+                with get_connection() as conn:
+                    conn.execute("DELETE FROM visite WHERE id=?", (int(visita_da_eliminare),))
+                    conn.commit()
+                st.success("Visita eliminata correttamente.")
+                st.rerun()
