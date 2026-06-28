@@ -2,52 +2,342 @@ from pathlib import Path
 
 
 def _patch_app():
-    p = Path(__file__).with_name('app.py')
+    p = Path(__file__).with_name("app.py")
     if not p.exists():
         return
-    s = p.read_text(encoding='utf-8')
+    s = p.read_text(encoding="utf-8")
 
     marker = 'def github_file_url():\n    return f"https://api.github.com/repos/{get_secret(\'GITHUB_REPO\')}/contents/{LOCAL_DATA_PATH}"\n'
-    insert = marker + '''\n\ndef configured_users():\n    raw = get_secret("USERS", "").strip()\n    if raw:\n        try:\n            users = json.loads(raw)\n            return {str(k).lower().strip(): v for k, v in users.items() if isinstance(v, dict)}\n        except Exception as e:\n            st.error(f"Configurazione USERS non valida nei Secrets: {e}")\n            st.stop()\n    return {"bodycenter": {"password": get_secret("APP_PASSWORD", "pilates123"), "role": "admin"}}\n\n\ndef current_role():\n    return st.session_state.get("current_role", "admin")\n\n\ndef current_user():\n    return st.session_state.get("current_user", "bodycenter")\n\n\ndef is_admin():\n    return current_role() == "admin"\n\n\ndef instructor_name_from_user():\n    u = current_user().lower().strip()\n    for name in INSTRUCTORS:\n        if name.lower() == u:\n            return name\n    return ""\n\n\ndef instructor_share():\n    try:\n        return float(get_secret("INSTRUCTOR_SHARE", "0.40"))\n    except Exception:\n        return 0.40\n\n\ndef gym_share():\n    try:\n        return float(get_secret("GYM_SHARE", "0.60"))\n    except Exception:\n        return 0.60\n\n\ndef visible_sections():\n    if is_admin():\n        return ["Settimana", "Prenota", "Clienti", "Cerca", "Incassi", "Archivio"]\n    return ["Settimana", "Prenota", "Clienti", "Cerca", "Incassi"]\n'''
-    if marker in s and 'def configured_users():' not in s:
-        s = s.replace(marker, insert, 1)
+    helpers = marker + '''
 
-    s = s.replace('''    data.setdefault("bookings", [])\n    data.setdefault("clients", [])''', '''    data.setdefault("bookings", [])\n    data.setdefault("clients", [])\n    data.setdefault("settlements", [])''', 1)
-    s = s.replace('''        b.setdefault("status", "Confermata")\n        b.setdefault("date", date.today().isoformat())''', '''        b.setdefault("status", "Confermata")\n        b.setdefault("settlement_id", "")\n        b.setdefault("date", date.today().isoformat())''', 1)
+def configured_users():
+    raw = get_secret("USERS", "").strip()
+    if raw:
+        try:
+            users = json.loads(raw)
+            return {str(k).lower().strip(): v for k, v in users.items() if isinstance(v, dict)}
+        except Exception as e:
+            st.error(f"Configurazione USERS non valida nei Secrets: {e}")
+            st.stop()
+    return {"bodycenter": {"password": get_secret("APP_PASSWORD", "pilates123"), "role": "admin"}}
+
+
+def current_role():
+    return st.session_state.get("current_role", "admin")
+
+
+def current_user():
+    return st.session_state.get("current_user", "bodycenter")
+
+
+def is_admin():
+    return current_role() == "admin"
+
+
+def instructor_name_from_user():
+    u = current_user().lower().strip()
+    for name in INSTRUCTORS:
+        if name.lower() == u:
+            return name
+    return ""
+
+
+def instructor_share():
+    try:
+        return float(get_secret("INSTRUCTOR_SHARE", "0.40"))
+    except Exception:
+        return 0.40
+
+
+def gym_share():
+    try:
+        return float(get_secret("GYM_SHARE", "0.60"))
+    except Exception:
+        return 0.60
+
+
+def visible_sections():
+    if is_admin():
+        return ["Settimana", "Prenota", "Clienti", "Cerca", "Incassi", "Archivio"]
+    return ["Settimana", "Prenota", "Clienti", "Cerca", "Incassi"]
+'''
+    if marker in s and "def configured_users():" not in s:
+        s = s.replace(marker, helpers, 1)
+
+    s = s.replace('''    data.setdefault("bookings", [])
+    data.setdefault("clients", [])''', '''    data.setdefault("bookings", [])
+    data.setdefault("clients", [])
+    data.setdefault("settlements", [])''', 1)
+
+    s = s.replace('''        b.setdefault("status", "Confermata")
+        b.setdefault("date", date.today().isoformat())''', '''        b.setdefault("status", "Confermata")
+        b.setdefault("settlement_id", "")
+        b.setdefault("date", date.today().isoformat())''', 1)
 
     try:
-        start = s.index('def login():')
-        end = s.index('\n\ndef render_header', start)
-        login = '''def login():\n    if st.session_state.get("authenticated", False):\n        return True\n    users = configured_users()\n    names = list(users.keys())\n    left, center, right = st.columns([1.4, 1.2, 1.4])\n    with center:\n        st.markdown("### Accesso staff")\n        st.caption("Seleziona utente e inserisci la password.")\n        username = st.selectbox("Utente", names, key="login_username")\n        pwd = st.text_input("Password", type="password", key="main_login_password")\n        if st.button("Accedi", type="primary", use_container_width=True):\n            cfg = users.get(str(username).lower().strip(), {})\n            if pwd and pwd == str(cfg.get("password", "")):\n                st.session_state["authenticated"] = True\n                st.session_state["current_user"] = str(username).lower().strip()\n                st.session_state["current_role"] = str(cfg.get("role", "instructor")).lower().strip()\n                st.rerun()\n            else:\n                st.error("Utente o password non corretti")\n    return False\n'''
+        start = s.index("def login():")
+        end = s.index("\n\ndef render_header", start)
+        login = '''def login():
+    if st.session_state.get("authenticated", False):
+        return True
+    users = configured_users()
+    names = list(users.keys())
+    left, center, right = st.columns([1.4, 1.2, 1.4])
+    with center:
+        st.markdown("### Accesso staff")
+        st.caption("Seleziona utente e inserisci la password.")
+        username = st.selectbox("Utente", names, key="login_username")
+        pwd = st.text_input("Password", type="password", key="main_login_password")
+        if st.button("Accedi", type="primary", use_container_width=True):
+            cfg = users.get(str(username).lower().strip(), {})
+            if pwd and pwd == str(cfg.get("password", "")):
+                st.session_state["authenticated"] = True
+                st.session_state["current_user"] = str(username).lower().strip()
+                st.session_state["current_role"] = str(cfg.get("role", "instructor")).lower().strip()
+                st.rerun()
+            else:
+                st.error("Utente o password non corretti")
+    return False
+'''
         s = s[:start] + login + s[end:]
     except ValueError:
         pass
 
-    settlement_code = '''\n\ndef settlement_bookings(data, instructor=None, paid=None):\n    rows = []\n    for b in data.get("bookings", []):\n        if b.get("status") == "Annullata":\n            continue\n        if b.get("settlement_id"):\n            continue\n        if instructor and b.get("instructor") != instructor:\n            continue\n        if paid is not None and to_bool(b.get("paid", False)) != paid:\n            continue\n        rows.append(b)\n    return rows\n\n\ndef settlement_summary(data, instructor=None):\n    all_rows = settlement_bookings(data, instructor, paid=None)\n    paid_rows = settlement_bookings(data, instructor, paid=True)\n    unpaid_rows = settlement_bookings(data, instructor, paid=False)\n    total = sum(money(b.get("amount", 0)) for b in all_rows)\n    paid_total = sum(money(b.get("amount", 0)) for b in paid_rows)\n    unpaid_total = sum(money(b.get("amount", 0)) for b in unpaid_rows)\n    return {\n        "all_rows": all_rows,\n        "paid_rows": paid_rows,\n        "unpaid_rows": unpaid_rows,\n        "total": total,\n        "paid_total": paid_total,\n        "unpaid_total": unpaid_total,\n        "inst_total": total * instructor_share(),\n        "inst_paid": paid_total * instructor_share(),\n        "inst_unpaid": unpaid_total * instructor_share(),\n        "gym_total": total * gym_share(),\n        "gym_paid": paid_total * gym_share(),\n        "gym_unpaid": unpaid_total * gym_share(),\n    }\n\n\ndef close_instructor_settlement(data, instructor):\n    summary = settlement_summary(data, instructor)\n    rows = summary["paid_rows"]\n    if not rows:\n        return False, "Nessun importo incassato da liquidare."\n    sid = new_id("sett_")\n    settlement = {\n        "id": sid,\n        "created_at": datetime.now().isoformat(timespec="seconds"),\n        "instructor": instructor,\n        "gross_amount": round(summary["paid_total"], 2),\n        "instructor_amount": round(summary["inst_paid"], 2),\n        "gym_amount": round(summary["gym_paid"], 2),\n        "lessons": len(rows),\n        "closed_by": current_user(),\n    }\n    data.setdefault("settlements", []).append(settlement)\n    for b in rows:\n        b["settlement_id"] = sid\n    return True, f"Liquidazione chiusa per {instructor}: € {summary['inst_paid']:.2f}."\n\n\ndef current_settlement_df(rows):\n    return pd.DataFrame([{\n        "Data": date_it(b.get("date")),\n        "Ora": b.get("time", ""),\n        "Cliente": b.get("name", ""),\n        "Pagato": "Sì" if to_bool(b.get("paid", False)) else "No",\n        "Stato": "Da liquidare" if to_bool(b.get("paid", False)) else "Da incassare",\n        "Importo totale": money(b.get("amount", 0)),\n        "Quota istruttrice 40%": round(money(b.get("amount", 0)) * instructor_share(), 2),\n        "Quota BodyCenter 60%": round(money(b.get("amount", 0)) * gym_share(), 2),\n    } for b in rows])\n\n\ndef historical_settlement_df(data, instructor=None):\n    hist = []\n    for x in data.get("settlements", []):\n        if instructor and x.get("instructor") != instructor:\n            continue\n        hist.append({\n            "Data liquidazione": x.get("created_at", ""),\n            "Istruttrice": x.get("instructor", ""),\n            "Incassato liquidato": money(x.get("gross_amount", 0)),\n            "Quota istruttrice 40%": money(x.get("instructor_amount", 0)),\n            "Quota BodyCenter 60%": money(x.get("gym_amount", 0)),\n            "Lezioni": int(x.get("lessons", 0) or 0),\n            "Stato": "Liquidata",\n            "Chiuso da": x.get("closed_by", ""),\n        })\n    return pd.DataFrame(hist)\n\n\ndef render_instructor_statement(data, instr, show_close_button=False, sha=None):\n    sm = settlement_summary(data, instr)\n    with st.container(border=True):\n        st.markdown(f"### {instr}")\n        a, b, c = st.columns(3)\n        a.metric(f"Totale {instr}", f"€ {sm['total']:.2f}")\n        b.metric("Incassato", f"€ {sm['paid_total']:.2f}")\n        c.metric("Da incassare", f"€ {sm['unpaid_total']:.2f}")\n\n        a, b, c = st.columns(3)\n        a.metric(f"Guadagno {instr} 40%", f"€ {sm['inst_total']:.2f}")\n        b.metric("Da liquidare ora", f"€ {sm['inst_paid']:.2f}")\n        c.metric("Quota BodyCenter 60%", f"€ {sm['gym_total']:.2f}")\n\n        st.caption(f"Lezioni non liquidate: {len(sm['all_rows'])} · pagate: {len(sm['paid_rows'])} · non pagate: {len(sm['unpaid_rows'])}")\n        if sm["all_rows"]:\n            st.markdown("#### Dettaglio corrente")\n            st.dataframe(current_settlement_df(sm["all_rows"]), use_container_width=True, hide_index=True)\n        else:\n            st.info("Nessun importo corrente non liquidato.")\n\n        if show_close_button:\n            st.caption("La liquidazione azzera solo le lezioni già pagate. Le lezioni non ancora pagate restano nel corrente.")\n            if st.button(f"Liquida e azzera pagato {instr}", key=f"settle_{instr}", type="primary", use_container_width=is_mobile_client()):\n                ok, msg = close_instructor_settlement(data, instr)\n                if ok:\n                    save_data(data, sha, f"Close settlement {instr}")\n                    st.success(msg)\n                    st.rerun()\n                else:\n                    st.info(msg)\n\n\ndef render_settlements(data, sha):\n    st.subheader("Incassi e liquidazioni")\n    st.caption("Totale = importi delle lezioni non ancora liquidate. BodyCenter prende il 60%; istruttrice prende il 40%.")\n    if is_admin():\n        summaries = {instr: settlement_summary(data, instr) for instr in INSTRUCTORS}\n        total_incassi = sum(sm["total"] for sm in summaries.values())\n        total_bodycenter = sum(sm["gym_total"] for sm in summaries.values())\n\n        a, b = st.columns(2)\n        a.metric("Totale incassi complessivi", f"€ {total_incassi:.2f}")\n        b.metric("Totale BodyCenter 60%", f"€ {total_bodycenter:.2f}")\n\n        metric_cols = st.columns(4)\n        for i, instr in enumerate(INSTRUCTORS):\n            sm = summaries[instr]\n            metric_cols[i * 2].metric(f"Totale {instr}", f"€ {sm['total']:.2f}")\n            metric_cols[i * 2 + 1].metric(f"Guadagno {instr} 40%", f"€ {sm['inst_total']:.2f}")\n\n        paid_total = sum(sm["paid_total"] for sm in summaries.values())\n        unpaid_total = sum(sm["unpaid_total"] for sm in summaries.values())\n        st.caption(f"Di cui già incassato: € {paid_total:.2f} · ancora da incassare: € {unpaid_total:.2f}")\n\n        for instr in INSTRUCTORS:\n            render_instructor_statement(data, instr, show_close_button=True, sha=sha)\n        hist_df = historical_settlement_df(data)\n        st.markdown("### Storico liquidazioni")\n        if not hist_df.empty:\n            st.dataframe(hist_df, use_container_width=True, hide_index=True)\n        else:\n            st.info("Nessuna liquidazione storica presente.")\n        return\n\n    instr = instructor_name_from_user()\n    if not instr:\n        st.error("Utente istruttrice non associato.")\n        return\n    render_instructor_statement(data, instr, show_close_button=False, sha=sha)\n    hist_df = historical_settlement_df(data, instr)\n    st.markdown("### Storico liquidazioni")\n    if not hist_df.empty:\n        cols = ["Data liquidazione", "Incassato liquidato", "Quota istruttrice 40%", "Quota BodyCenter 60%", "Lezioni", "Stato"]\n        st.dataframe(hist_df[cols], use_container_width=True, hide_index=True)\n    else:\n        st.info("Nessuna liquidazione storica presente.")\n'''
+    settlement_code = '''
 
-    boot = '\n\n# -----------------------------\n# App bootstrap'
-    if '\n\ndef settlement_bookings' in s:
-        start = s.index('\n\ndef settlement_bookings')
-        end = s.index(boot, start)
-        s = s[:start] + settlement_code + s[end:]
-    elif '\n\ndef unsettled_bookings' in s:
-        start = s.index('\n\ndef unsettled_bookings')
-        end = s.index(boot, start)
-        s = s[:start] + settlement_code + s[end:]
-    elif '\n\ndef render_settlements' in s:
-        start = s.index('\n\ndef render_settlements')
-        end = s.index(boot, start)
-        s = s[:start] + settlement_code + s[end:]
+def settlement_bookings(data, instructor=None, paid=None):
+    rows = []
+    for b in data.get("bookings", []):
+        if b.get("status") == "Annullata":
+            continue
+        if b.get("settlement_id"):
+            continue
+        if instructor and b.get("instructor") != instructor:
+            continue
+        if paid is not None and to_bool(b.get("paid", False)) != paid:
+            continue
+        rows.append(b)
+    return rows
+
+
+def settlement_summary(data, instructor=None):
+    all_rows = settlement_bookings(data, instructor, paid=None)
+    paid_rows = settlement_bookings(data, instructor, paid=True)
+    unpaid_rows = settlement_bookings(data, instructor, paid=False)
+    total = sum(money(b.get("amount", 0)) for b in all_rows)
+    paid_total = sum(money(b.get("amount", 0)) for b in paid_rows)
+    unpaid_total = sum(money(b.get("amount", 0)) for b in unpaid_rows)
+    return {
+        "all_rows": all_rows,
+        "paid_rows": paid_rows,
+        "unpaid_rows": unpaid_rows,
+        "total": total,
+        "paid_total": paid_total,
+        "unpaid_total": unpaid_total,
+        "inst_total": total * instructor_share(),
+        "inst_paid": paid_total * instructor_share(),
+        "inst_unpaid": unpaid_total * instructor_share(),
+        "gym_total": total * gym_share(),
+        "gym_paid": paid_total * gym_share(),
+        "gym_unpaid": unpaid_total * gym_share(),
+    }
+
+
+def close_instructor_settlement(data, instructor):
+    summary = settlement_summary(data, instructor)
+    rows = summary["paid_rows"]
+    if not rows:
+        return False, "Nessun importo incassato da liquidare."
+    sid = new_id("sett_")
+    settlement = {
+        "id": sid,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "instructor": instructor,
+        "gross_amount": round(summary["paid_total"], 2),
+        "instructor_amount": round(summary["inst_paid"], 2),
+        "gym_amount": round(summary["gym_paid"], 2),
+        "lessons": len(rows),
+        "closed_by": current_user(),
+    }
+    data.setdefault("settlements", []).append(settlement)
+    for b in rows:
+        b["settlement_id"] = sid
+    return True, f"Liquidazione chiusa per {instructor}: € {summary['inst_paid']:.2f}."
+
+
+def current_settlement_df(rows):
+    return pd.DataFrame([{
+        "Data": date_it(b.get("date")),
+        "Ora": b.get("time", ""),
+        "Cliente": b.get("name", ""),
+        "Pagato": "Sì" if to_bool(b.get("paid", False)) else "No",
+        "Stato": "Da liquidare" if to_bool(b.get("paid", False)) else "Da incassare",
+        "Importo totale": money(b.get("amount", 0)),
+        "Quota istruttrice 40%": round(money(b.get("amount", 0)) * instructor_share(), 2),
+        "Quota BodyCenter 60%": round(money(b.get("amount", 0)) * gym_share(), 2),
+    } for b in rows])
+
+
+def historical_settlement_df(data, instructor=None):
+    hist = []
+    for x in data.get("settlements", []):
+        if instructor and x.get("instructor") != instructor:
+            continue
+        hist.append({
+            "Data liquidazione": x.get("created_at", ""),
+            "Istruttrice": x.get("instructor", ""),
+            "Incassato liquidato": money(x.get("gross_amount", 0)),
+            "Quota istruttrice 40%": money(x.get("instructor_amount", 0)),
+            "Quota BodyCenter 60%": money(x.get("gym_amount", 0)),
+            "Lezioni": int(x.get("lessons", 0) or 0),
+            "Stato": "Liquidata",
+            "Chiuso da": x.get("closed_by", ""),
+        })
+    return pd.DataFrame(hist)
+
+
+def render_instructor_statement(data, instr, show_close_button=False, sha=None):
+    sm = settlement_summary(data, instr)
+    with st.container(border=True):
+        st.markdown(f"### {instr}")
+        a, b, c = st.columns(3)
+        a.metric(f"Totale {instr}", f"€ {sm['total']:.2f}")
+        b.metric("Incassato", f"€ {sm['paid_total']:.2f}")
+        c.metric("Da incassare", f"€ {sm['unpaid_total']:.2f}")
+
+        a, b, c = st.columns(3)
+        a.metric(f"Guadagno {instr} 40%", f"€ {sm['inst_total']:.2f}")
+        b.metric("Da liquidare ora", f"€ {sm['inst_paid']:.2f}")
+        c.metric("Quota BodyCenter 60%", f"€ {sm['gym_total']:.2f}")
+
+        st.caption(f"Lezioni non liquidate: {len(sm['all_rows'])} · pagate: {len(sm['paid_rows'])} · non pagate: {len(sm['unpaid_rows'])}")
+        if sm["all_rows"]:
+            st.markdown("#### Dettaglio corrente")
+            st.dataframe(current_settlement_df(sm["all_rows"]), use_container_width=True, hide_index=True)
+        else:
+            st.info("Nessun importo corrente non liquidato.")
+
+        if show_close_button:
+            st.caption("La liquidazione azzera solo le lezioni già pagate. Le lezioni non ancora pagate restano nel corrente.")
+            if st.button(f"Liquida e azzera pagato {instr}", key=f"settle_{instr}", type="primary", use_container_width=is_mobile_client()):
+                ok, msg = close_instructor_settlement(data, instr)
+                if ok:
+                    save_data(data, sha, f"Close settlement {instr}")
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.info(msg)
+
+
+def render_settlements(data, sha):
+    st.subheader("Incassi e liquidazioni")
+    st.caption("Totale = importi delle lezioni non ancora liquidate. BodyCenter prende il 60%; istruttrice prende il 40%.")
+    if is_admin():
+        summaries = {instr: settlement_summary(data, instr) for instr in INSTRUCTORS}
+        total_incassi = sum(sm["total"] for sm in summaries.values())
+        total_bodycenter = sum(sm["gym_total"] for sm in summaries.values())
+
+        a, b = st.columns(2)
+        a.metric("Totale incassi complessivi", f"€ {total_incassi:.2f}")
+        b.metric("Totale BodyCenter 60%", f"€ {total_bodycenter:.2f}")
+
+        metric_cols = st.columns(4)
+        for i, instr in enumerate(INSTRUCTORS):
+            sm = summaries[instr]
+            metric_cols[i * 2].metric(f"Totale {instr}", f"€ {sm['total']:.2f}")
+            metric_cols[i * 2 + 1].metric(f"Guadagno {instr} 40%", f"€ {sm['inst_total']:.2f}")
+
+        paid_total = sum(sm["paid_total"] for sm in summaries.values())
+        unpaid_total = sum(sm["unpaid_total"] for sm in summaries.values())
+        st.caption(f"Di cui già incassato: € {paid_total:.2f} · ancora da incassare: € {unpaid_total:.2f}")
+
+        for instr in INSTRUCTORS:
+            render_instructor_statement(data, instr, show_close_button=True, sha=sha)
+        hist_df = historical_settlement_df(data)
+        st.markdown("### Storico liquidazioni")
+        if not hist_df.empty:
+            st.dataframe(hist_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("Nessuna liquidazione storica presente.")
+        return
+
+    instr = instructor_name_from_user()
+    if not instr:
+        st.error("Utente istruttrice non associato.")
+        return
+    render_instructor_statement(data, instr, show_close_button=False, sha=sha)
+    hist_df = historical_settlement_df(data, instr)
+    st.markdown("### Storico liquidazioni")
+    if not hist_df.empty:
+        cols = ["Data liquidazione", "Incassato liquidato", "Quota istruttrice 40%", "Quota BodyCenter 60%", "Lezioni", "Stato"]
+        st.dataframe(hist_df[cols], use_container_width=True, hide_index=True)
+    else:
+        st.info("Nessuna liquidazione storica presente.")
+'''
+
+    boot = "\n\n# -----------------------------\n# App bootstrap"
+    for token in ["\n\ndef settlement_bookings", "\n\ndef unsettled_bookings", "\n\ndef render_settlements"]:
+        if token in s:
+            start = s.index(token)
+            end = s.index(boot, start)
+            s = s[:start] + settlement_code + s[end:]
+            break
     else:
         s = s.replace(boot, settlement_code + boot, 1)
 
-    s = s.replace('''def render_archive(data, sha):\n    if render_archive_open_client(data, sha):\n        return\n    st.subheader("Archivio, pagamenti e statistiche")''', '''def render_archive(data, sha):\n    if not is_admin():\n        st.error("Archivio economico riservato a BodyCenter.")\n        return\n    if render_archive_open_client(data, sha):\n        return\n    st.subheader("Archivio, pagamenti e statistiche")''')
+    s = s.replace('''def render_archive(data, sha):
+    if render_archive_open_client(data, sha):
+        return
+    st.subheader("Archivio, pagamenti e statistiche")''', '''def render_archive(data, sha):
+    if not is_admin():
+        st.error("Archivio economico riservato a BodyCenter.")
+        return
+    if render_archive_open_client(data, sha):
+        return
+    st.subheader("Archivio, pagamenti e statistiche")''')
 
-    s = s.replace('''if "_next_section" in st.session_state:\n    st.session_state["section"] = st.session_state.pop("_next_section")\nif "section" not in st.session_state or st.session_state["section"] not in SECTIONS:\n    st.session_state["section"] = "Settimana"\n\nsection = st.radio("Sezione", SECTIONS, horizontal=True, key="section", label_visibility="collapsed")''', '''allowed_sections = visible_sections()\nif "_next_section" in st.session_state:\n    nxt = st.session_state.pop("_next_section")\n    st.session_state["section"] = nxt if nxt in allowed_sections else "Settimana"\nif "section" not in st.session_state or st.session_state["section"] not in allowed_sections:\n    st.session_state["section"] = "Settimana"\n\nsection = st.radio("Sezione", allowed_sections, horizontal=True, key="section", label_visibility="collapsed")''')
+    s = s.replace('''if "_next_section" in st.session_state:
+    st.session_state["section"] = st.session_state.pop("_next_section")
+if "section" not in st.session_state or st.session_state["section"] not in SECTIONS:
+    st.session_state["section"] = "Settimana"
 
-    s = s.replace('''elif section == "Cerca":\n    render_search(data)\nelif section == "Archivio":\n    render_archive(data, sha)''', '''elif section == "Cerca":\n    render_search(data)\nelif section == "Incassi":\n    render_settlements(data, sha)\nelif section == "Archivio":\n    render_archive(data, sha)''')
+section = st.radio("Sezione", SECTIONS, horizontal=True, key="section", label_visibility="collapsed")''', '''allowed_sections = visible_sections()
+if "_next_section" in st.session_state:
+    nxt = st.session_state.pop("_next_section")
+    st.session_state["section"] = nxt if nxt in allowed_sections else "Settimana"
+if "section" not in st.session_state or st.session_state["section"] not in allowed_sections:
+    st.session_state["section"] = "Settimana"
 
-    p.write_text(s, encoding='utf-8')
+section = st.radio("Sezione", allowed_sections, horizontal=True, key="section", label_visibility="collapsed")''')
+
+    logout_anchor = 'section = st.radio("Sezione", allowed_sections, horizontal=True, key="section", label_visibility="collapsed")'
+    logout_block = logout_anchor + '''
+
+col_access, col_logout = st.columns([4, 1])
+with col_access:
+    try:
+        st.caption(f"Accesso: {current_user().capitalize()} · {'Admin' if is_admin() else 'Istruttrice'}")
+    except Exception:
+        pass
+with col_logout:
+    if st.button("Logout", key="logout_user_button", use_container_width=True):
+        for k in ["authenticated", "current_user", "current_role", "section", "client_open_id", "archive_open_client_id", "archive_open_select"]:
+            st.session_state.pop(k, None)
+        st.rerun()'''
+    if 'key="logout_user_button"' not in s and logout_anchor in s:
+        s = s.replace(logout_anchor, logout_block, 1)
+
+    s = s.replace('''elif section == "Cerca":
+    render_search(data)
+elif section == "Archivio":
+    render_archive(data, sha)''', '''elif section == "Cerca":
+    render_search(data)
+elif section == "Incassi":
+    render_settlements(data, sha)
+elif section == "Archivio":
+    render_archive(data, sha)''')
+
+    p.write_text(s, encoding="utf-8")
 
 
 try:
