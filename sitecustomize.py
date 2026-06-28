@@ -276,7 +276,8 @@ def _render_planning_view(data, rows, title, days=14):
         for (t, instr), group in sorted(slot.items(), key=lambda x: (x[0][0], x[0][1])):
             conf = [x for x in group if x.get("status") == "Confermata"]
             wait = [x for x in group if x.get("status") == "Lista attesa"]
-            lines.append(f"<div class='slot'><b>{_h(t)}</b> <span>{_h(instr)}</span> <em>{len(conf)}/{CAPACITY} · lib {max(CAPACITY-len(conf),0)}" + (f" · att {len(wait)}" if wait else "") + f"</em><br><small>{_h(', '.join([x.get('name','') for x in conf]) or '—')}</small></div>")
+            names = ", ".join([x.get('name','') for x in conf]) or '—'
+            lines.append(f"<div class='slot'><b>{_h(t)}</b> <span>{_h(instr)}</span> <em>{len(conf)}/{CAPACITY} · lib {max(CAPACITY-len(conf),0)}" + (f" · att {len(wait)}" if wait else "") + f"</em><br><small>{_h(names)}</small></div>")
         body = "".join(lines) if lines else "<div class='empty-text'>—</div>"
         cards.append(f"<div class='day-card{' empty' if not lines else ''}'><div class='day-title'>{_h(date_label_it(d))}</div>{body}</div>")
     css = "<style>.plan-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:7px}.day-card{border:1px solid #d9dde3;border-radius:10px;padding:8px 10px;background:#fff;min-height:76px}.day-card.empty{background:#fafafa;color:#9aa0a6}.day-title{font-weight:700;font-size:.92rem;margin-bottom:5px}.slot{font-size:.84rem;line-height:1.18;margin:3px 0 5px;padding-bottom:4px;border-bottom:1px solid #eef0f2}.slot:last-child{border-bottom:0}.slot em{font-style:normal;color:#707782;font-size:.78rem}.slot small{font-size:.78rem}</style>"
@@ -286,7 +287,13 @@ def _render_planning_view(data, rows, title, days=14):
             st.dataframe(_planning_table(rows), use_container_width=True, hide_index=True)
 
 
-def personal_planning_print_html(data, instr, days=14):
+def personal_planning_pdf_bytes(data, instr, days=14):
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    buf = BytesIO()
     rows = _planning_base_rows(data, days, instr)
     q40 = sum(money(b.get("amount", 0))*instructor_share() for b in rows)
     q60 = sum(money(b.get("amount", 0))*gym_share() for b in rows)
@@ -296,26 +303,55 @@ def personal_planning_print_html(data, instr, days=14):
     by = {d: [] for d in all_days}
     for r in rows:
         by.setdefault(r.get("date", ""), []).append(r)
-    h = ["<html><head><meta charset='utf-8'><style>body{font-family:Arial;margin:24px;color:#172033}table{width:100%;border-collapse:collapse}td,th{border-bottom:1px solid #ddd;padding:6px;font-size:12px;text-align:left}.box{display:inline-block;border:1px solid #ddd;border-radius:8px;padding:10px;margin:4px}button{padding:8px 12px}@media print{button{display:none}}</style></head><body><button onclick='window.print()'>Stampa</button>"]
-    h.append(f"<h1>Planning personale {_h(instr)}</h1><p>{date_it(all_days[0])} - {date_it(all_days[-1])}</p>")
-    h.append(f"<div class='box'>Mio incasso 40%<br><b>€ {q40:.2f}</b></div><div class='box'>Quota palestra 60%<br><b>€ {q60:.2f}</b></div><div class='box'>Mio già pagato<br><b>€ {paid40:.2f}</b></div><div class='box'>Mio da incassare<br><b>€ {q40-paid40:.2f}</b></div>")
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4), leftMargin=1*cm, rightMargin=1*cm, topMargin=0.8*cm, bottomMargin=0.8*cm)
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle("TitleDB", parent=styles["Title"], fontSize=18, leading=22, textColor=colors.HexColor(DARK))
+    small = ParagraphStyle("SmallDB", parent=styles["Normal"], fontSize=7, leading=8)
+    normal = ParagraphStyle("NormalDB", parent=styles["Normal"], fontSize=8, leading=10)
+    story = []
+    logo_cell = ""
+    logo = Path(LOGO_PATH)
+    if logo.exists():
+        logo_cell = Image(str(logo), width=3.2*cm, height=1.3*cm, kind="proportional")
+    header = Table([[logo_cell, Paragraph(f"Planning personale - {instr}", title_style)], ["", Paragraph(f"Periodo: {date_it(all_days[0])} - {date_it(all_days[-1])}", normal)]], colWidths=[4*cm, 22*cm])
+    header.setStyle(TableStyle([("VALIGN", (0,0), (-1,-1), "MIDDLE"), ("BOTTOMPADDING", (0,0), (-1,-1), 5)]))
+    story += [header, Spacer(1, 0.15*cm)]
+    summary = Table([
+        ["Mio incasso 40%", "Quota palestra 60%", "Mio già pagato", "Mio da incassare"],
+        [f"€ {q40:.2f}", f"€ {q60:.2f}", f"€ {paid40:.2f}", f"€ {q40-paid40:.2f}"],
+    ], colWidths=[6.5*cm]*4)
+    summary.setStyle(TableStyle([("BACKGROUND", (0,0), (-1,0), colors.HexColor(LIGHT_GREEN)), ("TEXTCOLOR", (0,0), (-1,0), colors.HexColor(DARK)), ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"), ("FONTNAME", (0,1), (-1,1), "Helvetica-Bold"), ("FONTSIZE", (0,0), (-1,-1), 10), ("ALIGN", (0,0), (-1,-1), "CENTER"), ("BOX", (0,0), (-1,-1), 0.6, colors.HexColor("#cfd8d3")), ("INNERGRID", (0,0), (-1,-1), 0.3, colors.HexColor("#dfe7e2")), ("PADDING", (0,0), (-1,-1), 7)]))
+    story += [summary, Spacer(1, 0.25*cm)]
+    table_rows = [["Data", "Ora", "Cliente", "Telefono", "Pagato", "Quota 40%", "Palestra 60%", "Note"]]
     for d in all_days:
-        h.append(f"<h2>{_h(date_label_it(d))}</h2>")
-        if not by[d]:
-            h.append("<p>—</p>")
+        day_rows = sorted(by.get(d, []), key=lambda x: (str(x.get("time", "")), str(x.get("name", ""))))
+        if not day_rows:
+            table_rows.append([Paragraph(date_label_it(d), small), "-", Paragraph("-", small), "", "", "", "", ""])
             continue
-        h.append("<table><tr><th>Ora</th><th>Cliente</th><th>Telefono</th><th>Pagato</th><th>Quota 40%</th><th>Quota palestra</th><th>Note</th></tr>")
-        for b in sorted(by[d], key=lambda x: (str(x.get("time", "")), str(x.get("name", "")))):
+        first = True
+        for b in day_rows:
             am = money(b.get("amount", 0))
-            h.append(f"<tr><td>{_h(b.get('time',''))}</td><td>{_h(b.get('name',''))}</td><td>{_h(b.get('phone',''))}</td><td>{'Sì' if to_bool(b.get('paid', False)) else 'No'}</td><td>€ {am*instructor_share():.2f}</td><td>€ {am*gym_share():.2f}</td><td>{_h(b.get('note',''))}</td></tr>")
-        h.append("</table>")
-    h.append("</body></html>")
-    return "".join(h)
+            table_rows.append([
+                Paragraph(date_label_it(d) if first else "", small),
+                Paragraph(str(b.get("time", "")), small),
+                Paragraph(_h(b.get("name", "")), small),
+                Paragraph(_h(b.get("phone", "")), small),
+                "Sì" if to_bool(b.get("paid", False)) else "No",
+                f"€ {am*instructor_share():.2f}",
+                f"€ {am*gym_share():.2f}",
+                Paragraph(_h(b.get("note", "")), small),
+            ])
+            first = False
+    tbl = Table(table_rows, repeatRows=1, colWidths=[3.0*cm, 1.6*cm, 4.3*cm, 3.0*cm, 1.6*cm, 2.3*cm, 2.5*cm, 6.5*cm])
+    tbl.setStyle(TableStyle([("BACKGROUND", (0,0), (-1,0), colors.HexColor(DARK)), ("TEXTCOLOR", (0,0), (-1,0), colors.white), ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"), ("FONTSIZE", (0,0), (-1,-1), 7), ("VALIGN", (0,0), (-1,-1), "TOP"), ("GRID", (0,0), (-1,-1), 0.25, colors.HexColor("#d9dde3")), ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, colors.HexColor("#f8faf9")]), ("PADDING", (0,0), (-1,-1), 4)]))
+    story.append(tbl)
+    doc.build(story)
+    return buf.getvalue()
 
 
 def render_personal_planning_download(data, instr, days=14):
     if instr:
-        st.download_button("Stampa / scarica planning personale + incasso", personal_planning_print_html(data, instr, days).encode("utf-8"), file_name=f"planning_{instr.lower()}_14_giorni.html", mime="text/html", use_container_width=is_mobile_client(), key=f"download_planning_{instr}")
+        st.download_button("Scarica PDF planning personale + incasso", data=personal_planning_pdf_bytes(data, instr, days), file_name=f"planning_{instr.lower()}_14_giorni.pdf", mime="application/pdf", use_container_width=is_mobile_client(), key=f"download_pdf_planning_{instr}")
 
 
 def render_planning(data, sha=None):
