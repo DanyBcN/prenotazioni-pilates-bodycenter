@@ -298,7 +298,7 @@ def render_instructor_archive(data):
 
 def _planning_base_rows(data, days, instructor=None):
     today = date.today()
-    end = today + timedelta(days=days)
+    end = today + timedelta(days=days - 1)
     out = []
     for b in data.get("bookings", []):
         if b.get("status") == "Annullata":
@@ -326,69 +326,84 @@ def _planning_table(rows):
     } for b in rows])
 
 
-def _render_planning_view(data, rows, title):
+def _h(x):
+    return str(x or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _render_planning_view(data, rows, title, days=14):
     st.markdown(f"### {title}")
-    today_key = date.today().isoformat()
-    today_rows = [b for b in rows if b.get("date") == today_key]
-    week_limit = date.today() + timedelta(days=7)
-    week_rows = []
-    for b in rows:
-        try:
-            if parse_date(b.get("date")) <= week_limit:
-                week_rows.append(b)
-        except Exception:
-            pass
+    today = date.today()
+    all_days = [(today + timedelta(days=i)).isoformat() for i in range(days)]
+    by_day = {d: [] for d in all_days}
+    for r in rows:
+        by_day.setdefault(r.get("date", ""), []).append(r)
+
+    today_rows = [b for b in rows if b.get("date") == today.isoformat()]
     waiting = [b for b in rows if b.get("status") == "Lista attesa"]
     a, b, c = st.columns(3)
     a.metric("Oggi", len(today_rows))
-    b.metric("Prossimi 7 giorni", len(week_rows))
+    b.metric(f"Prossimi {days} giorni", len(rows))
     c.metric("Lista attesa", len(waiting))
-    if not rows:
-        st.info("Nessun prossimo impegno nel periodo selezionato.")
-        return
 
-    day_map = {}
-    for r in rows:
-        day_map.setdefault(r.get("date", ""), []).append(r)
-
-    st.markdown("#### Planning per giorno")
-    for day in sorted(day_map.keys()):
-        day_rows = day_map[day]
+    cards = []
+    for d in all_days:
+        day_rows = by_day.get(d, [])
         slot_map = {}
         for r in day_rows:
             key = (r.get("time", ""), r.get("instructor", ""))
             slot_map.setdefault(key, []).append(r)
-        with st.container(border=True):
-            st.markdown(f"### {date_label_it(day)}")
-            for idx, ((t, instr), group) in enumerate(sorted(slot_map.items(), key=lambda item: (item[0][0], item[0][1]))):
-                conf = [x for x in group if x.get("status") == "Confermata"]
-                wait = [x for x in group if x.get("status") == "Lista attesa"]
-                posti = max(CAPACITY - len(conf), 0)
-                st.markdown(f"**{t} · {instr}**")
-                st.caption(f"Confermate: {len(conf)}/{CAPACITY} · Posti liberi: {posti} · Attesa: {len(wait)}")
-                st.write("; ".join([x.get("name", "") for x in conf]) or "Nessun confermato")
-                if wait:
-                    st.caption("Lista attesa: " + "; ".join([x.get("name", "") for x in wait]))
-                if idx < len(slot_map) - 1:
-                    st.divider()
-    st.markdown("#### Elenco rapido")
-    st.dataframe(_planning_table(rows), use_container_width=True, hide_index=True)
+        slot_lines = []
+        for (t, instr), group in sorted(slot_map.items(), key=lambda item: (item[0][0], item[0][1])):
+            conf = [x for x in group if x.get("status") == "Confermata"]
+            wait = [x for x in group if x.get("status") == "Lista attesa"]
+            posti = max(CAPACITY - len(conf), 0)
+            clients = ", ".join([_h(x.get("name", "")) for x in conf]) or "—"
+            wait_txt = f" · att {len(wait)}" if wait else ""
+            slot_lines.append(
+                f"<div class='slot'><b>{_h(t)}</b> <span>{_h(instr)}</span> "
+                f"<em>{len(conf)}/{CAPACITY} · lib {posti}{wait_txt}</em><br>"
+                f"<small>{clients}</small></div>"
+            )
+        empty_cls = " empty" if not slot_lines else ""
+        body = "".join(slot_lines) if slot_lines else "<div class='empty-text'>—</div>"
+        cards.append(f"<div class='day-card{empty_cls}'><div class='day-title'>{_h(date_label_it(d))}</div>{body}</div>")
+
+    html = """
+<style>
+.plan-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:7px;margin-top:8px;}
+.day-card{border:1px solid #d9dde3;border-radius:10px;padding:8px 10px;background:#fff;min-height:76px;}
+.day-card.empty{background:#fafafa;color:#9aa0a6;}
+.day-title{font-weight:700;font-size:0.92rem;margin-bottom:5px;color:#172033;}
+.slot{font-size:0.84rem;line-height:1.18;margin:3px 0 5px 0;padding-bottom:4px;border-bottom:1px solid #eef0f2;}
+.slot:last-child{border-bottom:0;margin-bottom:0;padding-bottom:0;}
+.slot span{font-weight:600;color:#172033;}
+.slot em{font-style:normal;color:#707782;font-size:0.78rem;}
+.slot small{font-size:0.78rem;color:#172033;}
+.empty-text{font-size:0.85rem;color:#a0a6ad;}
+</style>
+<div class="plan-grid">
+""" + "".join(cards) + "</div>"
+    st.markdown(html, unsafe_allow_html=True)
+
+    if rows:
+        with st.expander("Elenco rapido", expanded=False):
+            st.dataframe(_planning_table(rows), use_container_width=True, hide_index=True)
 
 
 def render_planning(data):
-    st.subheader("Planning prossimi impegni")
-    giorni = st.selectbox("Periodo", [7, 14, 30, 60], index=1, format_func=lambda x: f"Prossimi {x} giorni")
+    st.subheader("Planning 14 giorni")
+    giorni = 14
     if is_admin():
         vista = st.selectbox("Vista", ["Tutte", *INSTRUCTORS], key="planning_admin_view")
         instr = None if vista == "Tutte" else vista
-        _render_planning_view(data, _planning_base_rows(data, giorni, instr), f"Planning {vista}")
+        _render_planning_view(data, _planning_base_rows(data, giorni, instr), f"Planning {vista}", giorni)
         return
     instr = instructor_name_from_user()
     tab_miei, tab_tutti = st.tabs(["I miei impegni", "Tutti gli impegni"])
     with tab_miei:
-        _render_planning_view(data, _planning_base_rows(data, giorni, instr), f"Prossimi impegni {instr}")
+        _render_planning_view(data, _planning_base_rows(data, giorni, instr), f"Prossimi impegni {instr}", giorni)
     with tab_tutti:
-        _render_planning_view(data, _planning_base_rows(data, giorni, None), "Planning completo")
+        _render_planning_view(data, _planning_base_rows(data, giorni, None), "Planning completo", giorni)
 '''
 
     boot = "\n\n# -----------------------------\n# App bootstrap"
