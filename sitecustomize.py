@@ -1,4 +1,12 @@
 from pathlib import Path
+import re
+
+
+def _replace_function(src, name, replacement):
+    m = re.search(rf"\ndef {name}\([^\n]*\):\n.*?(?=\n\ndef |\n\n# -----------------------------|\Z)", src, flags=re.S)
+    if m:
+        return src[:m.start()] + "\n\n" + replacement.rstrip() + src[m.end():]
+    return src
 
 
 def _patch_app():
@@ -8,7 +16,9 @@ def _patch_app():
     s = p.read_text(encoding="utf-8")
 
     marker = 'def github_file_url():\n    return f"https://api.github.com/repos/{get_secret(\'GITHUB_REPO\')}/contents/{LOCAL_DATA_PATH}"\n'
-    helpers = marker + '''
+    helper_block = '''def github_file_url():
+    return f"https://api.github.com/repos/{get_secret('GITHUB_REPO')}/contents/{LOCAL_DATA_PATH}"
+
 
 def configured_users():
     raw = get_secret("USERS", "").strip()
@@ -57,27 +67,24 @@ def gym_share():
 
 
 def visible_sections():
-    if is_admin():
-        return ["Settimana", "Prenota", "Clienti", "Cerca", "Incassi", "Archivio"]
-    return ["Settimana", "Prenota", "Clienti", "Cerca", "Incassi"]
+    return ["Settimana", "Prenota", "Clienti", "Cerca", "Incassi", "Archivio"]
 '''
-    if marker in s and "def configured_users():" not in s:
-        s = s.replace(marker, helpers, 1)
+    if "def configured_users():" not in s and marker in s:
+        s = s.replace(marker, helper_block, 1)
+    elif "def visible_sections():" in s:
+        s = _replace_function(s, "visible_sections", '''def visible_sections():
+    return ["Settimana", "Prenota", "Clienti", "Cerca", "Incassi", "Archivio"]''')
 
     s = s.replace('''    data.setdefault("bookings", [])
     data.setdefault("clients", [])''', '''    data.setdefault("bookings", [])
     data.setdefault("clients", [])
     data.setdefault("settlements", [])''', 1)
-
     s = s.replace('''        b.setdefault("status", "Confermata")
         b.setdefault("date", date.today().isoformat())''', '''        b.setdefault("status", "Confermata")
         b.setdefault("settlement_id", "")
         b.setdefault("date", date.today().isoformat())''', 1)
 
-    try:
-        start = s.index("def login():")
-        end = s.index("\n\ndef render_header", start)
-        login = '''def login():
+    s = _replace_function(s, "login", '''def login():
     if st.session_state.get("authenticated", False):
         return True
     users = configured_users()
@@ -97,13 +104,9 @@ def visible_sections():
                 st.rerun()
             else:
                 st.error("Utente o password non corretti")
-    return False
-'''
-        s = s[:start] + login + s[end:]
-    except ValueError:
-        pass
+    return False''')
 
-    settlement_code = '''
+    finance_code = '''
 
 def settlement_bookings(data, instructor=None, paid=None):
     rows = []
@@ -136,10 +139,8 @@ def settlement_summary(data, instructor=None):
         "unpaid_total": unpaid_total,
         "inst_total": total * instructor_share(),
         "inst_paid": paid_total * instructor_share(),
-        "inst_unpaid": unpaid_total * instructor_share(),
         "gym_total": total * gym_share(),
         "gym_paid": paid_total * gym_share(),
-        "gym_unpaid": unpaid_total * gym_share(),
     }
 
 
@@ -149,7 +150,7 @@ def close_instructor_settlement(data, instructor):
     if not rows:
         return False, "Nessun importo incassato da liquidare."
     sid = new_id("sett_")
-    settlement = {
+    data.setdefault("settlements", []).append({
         "id": sid,
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "instructor": instructor,
@@ -158,8 +159,7 @@ def close_instructor_settlement(data, instructor):
         "gym_amount": round(summary["gym_paid"], 2),
         "lessons": len(rows),
         "closed_by": current_user(),
-    }
-    data.setdefault("settlements", []).append(settlement)
+    })
     for b in rows:
         b["settlement_id"] = sid
     return True, f"Liquidazione chiusa per {instructor}: € {summary['inst_paid']:.2f}."
@@ -204,19 +204,14 @@ def render_instructor_statement(data, instr, show_close_button=False, sha=None):
         a.metric(f"Totale {instr}", f"€ {sm['total']:.2f}")
         b.metric("Incassato", f"€ {sm['paid_total']:.2f}")
         c.metric("Da incassare", f"€ {sm['unpaid_total']:.2f}")
-
         a, b, c = st.columns(3)
         a.metric(f"Guadagno {instr} 40%", f"€ {sm['inst_total']:.2f}")
         b.metric("Da liquidare ora", f"€ {sm['inst_paid']:.2f}")
         c.metric("Quota BodyCenter 60%", f"€ {sm['gym_total']:.2f}")
-
-        st.caption(f"Lezioni non liquidate: {len(sm['all_rows'])} · pagate: {len(sm['paid_rows'])} · non pagate: {len(sm['unpaid_rows'])}")
         if sm["all_rows"]:
-            st.markdown("#### Dettaglio corrente")
             st.dataframe(current_settlement_df(sm["all_rows"]), use_container_width=True, hide_index=True)
         else:
             st.info("Nessun importo corrente non liquidato.")
-
         if show_close_button:
             st.caption("La liquidazione azzera solo le lezioni già pagate. Le lezioni non ancora pagate restano nel corrente.")
             if st.button(f"Liquida e azzera pagato {instr}", key=f"settle_{instr}", type="primary", use_container_width=is_mobile_client()):
@@ -231,26 +226,21 @@ def render_instructor_statement(data, instr, show_close_button=False, sha=None):
 
 def render_settlements(data, sha):
     st.subheader("Incassi e liquidazioni")
-    st.caption("Totale = importi delle lezioni non ancora liquidate. BodyCenter prende il 60%; istruttrice prende il 40%.")
     if is_admin():
         summaries = {instr: settlement_summary(data, instr) for instr in INSTRUCTORS}
         total_incassi = sum(sm["total"] for sm in summaries.values())
         total_bodycenter = sum(sm["gym_total"] for sm in summaries.values())
-
         a, b = st.columns(2)
         a.metric("Totale incassi complessivi", f"€ {total_incassi:.2f}")
         b.metric("Totale BodyCenter 60%", f"€ {total_bodycenter:.2f}")
-
         metric_cols = st.columns(4)
         for i, instr in enumerate(INSTRUCTORS):
             sm = summaries[instr]
             metric_cols[i * 2].metric(f"Totale {instr}", f"€ {sm['total']:.2f}")
             metric_cols[i * 2 + 1].metric(f"Guadagno {instr} 40%", f"€ {sm['inst_total']:.2f}")
-
         paid_total = sum(sm["paid_total"] for sm in summaries.values())
         unpaid_total = sum(sm["unpaid_total"] for sm in summaries.values())
         st.caption(f"Di cui già incassato: € {paid_total:.2f} · ancora da incassare: € {unpaid_total:.2f}")
-
         for instr in INSTRUCTORS:
             render_instructor_statement(data, instr, show_close_button=True, sha=sha)
         hist_df = historical_settlement_df(data)
@@ -260,7 +250,6 @@ def render_settlements(data, sha):
         else:
             st.info("Nessuna liquidazione storica presente.")
         return
-
     instr = instructor_name_from_user()
     if not instr:
         st.error("Utente istruttrice non associato.")
@@ -273,6 +262,44 @@ def render_settlements(data, sha):
         st.dataframe(hist_df[cols], use_container_width=True, hide_index=True)
     else:
         st.info("Nessuna liquidazione storica presente.")
+
+
+def render_instructor_archive(data):
+    instr = instructor_name_from_user()
+    if not instr:
+        st.error("Archivio riservato all'istruttrice collegata.")
+        return
+    st.subheader(f"Archivio prenotazioni {instr}")
+    rows = [b for b in data.get("bookings", []) if b.get("instructor") == instr]
+    rows = sorted(rows, key=lambda b: (str(b.get("date", "")), str(b.get("time", ""))), reverse=True)
+    valid = [b for b in rows if b.get("status") != "Annullata"]
+    total = sum(money(b.get("amount", 0)) for b in valid)
+    paid = sum(money(b.get("amount", 0)) for b in valid if to_bool(b.get("paid", False)))
+    unpaid = total - paid
+    a, b, c = st.columns(3)
+    a.metric("Totale prenotazioni", f"€ {total:.2f}")
+    b.metric("Incassato", f"€ {paid:.2f}")
+    c.metric("Da incassare", f"€ {unpaid:.2f}")
+    a, b = st.columns(2)
+    a.metric("Guadagno 40%", f"€ {total * instructor_share():.2f}")
+    b.metric("Quota BodyCenter 60%", f"€ {total * gym_share():.2f}")
+    if not rows:
+        st.info("Nessuna prenotazione presente.")
+        return
+    df = pd.DataFrame([{
+        "Data": date_it(x.get("date")),
+        "Ora": x.get("time", ""),
+        "Cliente": x.get("name", ""),
+        "Telefono": x.get("phone", ""),
+        "Stato prenotazione": x.get("status", ""),
+        "Pagato": "Sì" if to_bool(x.get("paid", False)) else "No",
+        "Importo totale": money(x.get("amount", 0)),
+        "Quota 40%": round(money(x.get("amount", 0)) * instructor_share(), 2),
+        "Quota BodyCenter 60%": round(money(x.get("amount", 0)) * gym_share(), 2),
+        "Liquidazione": "Liquidata" if x.get("settlement_id") else ("Da liquidare" if to_bool(x.get("paid", False)) else "Da incassare"),
+        "Note": x.get("note", ""),
+    } for x in rows])
+    st.dataframe(df, use_container_width=True, hide_index=True)
 '''
 
     boot = "\n\n# -----------------------------\n# App bootstrap"
@@ -280,21 +307,26 @@ def render_settlements(data, sha):
         if token in s:
             start = s.index(token)
             end = s.index(boot, start)
-            s = s[:start] + settlement_code + s[end:]
+            s = s[:start] + finance_code + s[end:]
             break
     else:
-        s = s.replace(boot, settlement_code + boot, 1)
+        s = s.replace(boot, finance_code + boot, 1)
 
     s = s.replace('''def render_archive(data, sha):
-    if render_archive_open_client(data, sha):
-        return
-    st.subheader("Archivio, pagamenti e statistiche")''', '''def render_archive(data, sha):
     if not is_admin():
         st.error("Archivio economico riservato a BodyCenter.")
         return
-    if render_archive_open_client(data, sha):
+    if render_archive_open_client(data, sha):''', '''def render_archive(data, sha):
+    if not is_admin():
+        render_instructor_archive(data)
         return
-    st.subheader("Archivio, pagamenti e statistiche")''')
+    if render_archive_open_client(data, sha):''')
+    s = s.replace('''def render_archive(data, sha):
+    if render_archive_open_client(data, sha):''', '''def render_archive(data, sha):
+    if not is_admin():
+        render_instructor_archive(data)
+        return
+    if render_archive_open_client(data, sha):''')
 
     s = s.replace('''if "_next_section" in st.session_state:
     st.session_state["section"] = st.session_state.pop("_next_section")
