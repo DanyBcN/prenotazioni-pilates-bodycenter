@@ -67,13 +67,17 @@ def gym_share():
 
 
 def visible_sections():
-    return ["Planning", "Settimana", "Prenota", "Clienti", "Cerca", "Incassi", "Archivio"]
+    if is_admin():
+        return ["Planning", "Settimana", "Prenota", "Clienti", "Cerca", "Incassi", "Archivio"]
+    return ["Planning", "Prenota", "Clienti", "Cerca", "Incassi"]
 '''
     if "def configured_users():" not in s and marker in s:
         s = s.replace(marker, helper_block, 1)
     elif "def visible_sections():" in s:
         s = _replace_function(s, "visible_sections", '''def visible_sections():
-    return ["Planning", "Settimana", "Prenota", "Clienti", "Cerca", "Incassi", "Archivio"]''')
+    if is_admin():
+        return ["Planning", "Settimana", "Prenota", "Clienti", "Cerca", "Incassi", "Archivio"]
+    return ["Planning", "Prenota", "Clienti", "Cerca", "Incassi"]''')
 
     s = s.replace('''    data.setdefault("bookings", [])
     data.setdefault("clients", [])''', '''    data.setdefault("bookings", [])
@@ -149,7 +153,7 @@ def cancel_booking(data, booking_id, note=""):
     for b in data.get("bookings", []):
         if b.get("id") == booking_id:
             if b.get("settlement_id"):
-                return False, "Prenotazione già liquidata: non annullarla dall'account istruttrice."
+                return False, "Prenotazione già liquidata: non annullarla da qui."
             b["status"] = "Annullata"
             b["cancelled_at"] = datetime.now().isoformat(timespec="seconds")
             b["cancelled_by"] = current_user()
@@ -160,8 +164,14 @@ def cancel_booking(data, booking_id, note=""):
     return False, "Prenotazione non trovata."
 
 
-def current_settlement_df(rows):
-    return pd.DataFrame([{"Data": date_it(b.get("date")), "Ora": b.get("time", ""), "Cliente": b.get("name", ""), "Pagato": "Sì" if to_bool(b.get("paid", False)) else "No", "Stato": "Da liquidare" if to_bool(b.get("paid", False)) else "Da incassare", "Importo totale": money(b.get("amount", 0)), "Quota istruttrice 40%": round(money(b.get("amount", 0)) * instructor_share(), 2), "Quota BodyCenter 60%": round(money(b.get("amount", 0)) * gym_share(), 2)} for b in rows])
+def current_settlement_df(rows, include_gross=True):
+    out = []
+    for b in rows:
+        row = {"Data": date_it(b.get("date")), "Ora": b.get("time", ""), "Cliente": b.get("name", ""), "Pagato": "Sì" if to_bool(b.get("paid", False)) else "No", "Stato": "Da liquidare" if to_bool(b.get("paid", False)) else "Da incassare", "Quota istruttrice 40%": round(money(b.get("amount", 0)) * instructor_share(), 2), "Quota BodyCenter 60%": round(money(b.get("amount", 0)) * gym_share(), 2)}
+        if include_gross:
+            row["Importo totale"] = money(b.get("amount", 0))
+        out.append(row)
+    return pd.DataFrame(out)
 
 
 def historical_settlement_df(data, instructor=None):
@@ -177,16 +187,23 @@ def render_instructor_statement(data, instr, show_close_button=False, sha=None):
     sm = settlement_summary(data, instr)
     with st.container(border=True):
         st.markdown(f"### {instr}")
-        a, b, c = st.columns(3)
-        a.metric(f"Totale {instr}", f"€ {sm['total']:.2f}")
-        b.metric("Incassato", f"€ {sm['paid_total']:.2f}")
-        c.metric("Da incassare", f"€ {sm['unpaid_total']:.2f}")
-        a, b, c = st.columns(3)
-        a.metric(f"Guadagno {instr} 40%", f"€ {sm['inst_total']:.2f}")
-        b.metric("Da liquidare ora", f"€ {sm['inst_paid']:.2f}")
-        c.metric("Quota BodyCenter 60%", f"€ {sm['gym_total']:.2f}")
+        if show_close_button:
+            a, b, c = st.columns(3)
+            a.metric(f"Totale {instr}", f"€ {sm['total']:.2f}")
+            b.metric("Incassato", f"€ {sm['paid_total']:.2f}")
+            c.metric("Da incassare", f"€ {sm['unpaid_total']:.2f}")
+            a, b, c = st.columns(3)
+            a.metric(f"Guadagno {instr} 40%", f"€ {sm['inst_total']:.2f}")
+            b.metric("Da liquidare ora", f"€ {sm['inst_paid']:.2f}")
+            c.metric("Quota BodyCenter 60%", f"€ {sm['gym_total']:.2f}")
+        else:
+            a, b, c = st.columns(3)
+            a.metric("Mio guadagno 40%", f"€ {sm['inst_total']:.2f}")
+            b.metric("Quota palestra 60%", f"€ {sm['gym_total']:.2f}")
+            c.metric("Da liquidare ora", f"€ {sm['inst_paid']:.2f}")
+            st.caption(f"Lezioni mie: {len(sm['all_rows'])} · pagate: {len(sm['paid_rows'])} · non pagate: {len(sm['unpaid_rows'])}")
         if sm["all_rows"]:
-            st.dataframe(current_settlement_df(sm["all_rows"]), use_container_width=True, hide_index=True)
+            st.dataframe(current_settlement_df(sm["all_rows"], include_gross=show_close_button), use_container_width=True, hide_index=True)
         else:
             st.info("Nessun importo corrente non liquidato.")
         if show_close_button:
@@ -230,7 +247,7 @@ def render_settlements(data, sha):
     hist_df = historical_settlement_df(data, instr)
     st.markdown("### Storico liquidazioni")
     if not hist_df.empty:
-        cols = ["Data liquidazione", "Incassato liquidato", "Quota istruttrice 40%", "Quota BodyCenter 60%", "Lezioni", "Stato"]
+        cols = ["Data liquidazione", "Quota istruttrice 40%", "Quota BodyCenter 60%", "Lezioni", "Stato"]
         st.dataframe(hist_df[cols], use_container_width=True, hide_index=True)
     else:
         st.info("Nessuna liquidazione storica presente.")
@@ -278,7 +295,6 @@ def render_cancel_booking_box(data, sha):
 
 def render_instructor_archive(data, sha=None):
     st.subheader("Archivio prenotazioni completo")
-    render_cancel_booking_box(data, sha)
     rows = list(data.get("bookings", []))
     rows = sorted(rows, key=lambda b: (str(b.get("date", "")), str(b.get("time", ""))), reverse=True)
     valid = [b for b in rows if b.get("status") != "Annullata"]
@@ -363,8 +379,9 @@ def _render_planning_view(data, rows, title, days=14):
             st.dataframe(_planning_table(rows), use_container_width=True, hide_index=True)
 
 
-def render_planning(data):
+def render_planning(data, sha=None):
     st.subheader("Planning 14 giorni")
+    render_cancel_booking_box(data, sha)
     giorni = 14
     if is_admin():
         vista = st.selectbox("Vista", ["Tutte", *INSTRUCTORS], key="planning_admin_view")
@@ -440,7 +457,7 @@ with col_logout:
         s = s[:m.start()] + menu_block + s[m.end():]
 
     dispatch = '''if section == "Planning":
-    render_planning(data)
+    render_planning(data, sha)
 elif section == "Settimana":
     render_week(data, sha)
 elif section == "Prenota":
