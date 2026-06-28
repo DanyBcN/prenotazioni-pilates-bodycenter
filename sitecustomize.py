@@ -265,12 +265,8 @@ def render_settlements(data, sha):
 
 
 def render_instructor_archive(data):
-    instr = instructor_name_from_user()
-    if not instr:
-        st.error("Archivio riservato all'istruttrice collegata.")
-        return
-    st.subheader(f"Archivio prenotazioni {instr}")
-    rows = [b for b in data.get("bookings", []) if b.get("instructor") == instr]
+    st.subheader("Archivio prenotazioni completo")
+    rows = list(data.get("bookings", []))
     rows = sorted(rows, key=lambda b: (str(b.get("date", "")), str(b.get("time", ""))), reverse=True)
     valid = [b for b in rows if b.get("status") != "Annullata"]
     total = sum(money(b.get("amount", 0)) for b in valid)
@@ -280,9 +276,6 @@ def render_instructor_archive(data):
     a.metric("Totale prenotazioni", f"€ {total:.2f}")
     b.metric("Incassato", f"€ {paid:.2f}")
     c.metric("Da incassare", f"€ {unpaid:.2f}")
-    a, b = st.columns(2)
-    a.metric("Guadagno 40%", f"€ {total * instructor_share():.2f}")
-    b.metric("Quota BodyCenter 60%", f"€ {total * gym_share():.2f}")
     if not rows:
         st.info("Nessuna prenotazione presente.")
         return
@@ -291,10 +284,11 @@ def render_instructor_archive(data):
         "Ora": x.get("time", ""),
         "Cliente": x.get("name", ""),
         "Telefono": x.get("phone", ""),
+        "Istruttrice": x.get("instructor", ""),
         "Stato prenotazione": x.get("status", ""),
         "Pagato": "Sì" if to_bool(x.get("paid", False)) else "No",
         "Importo totale": money(x.get("amount", 0)),
-        "Quota 40%": round(money(x.get("amount", 0)) * instructor_share(), 2),
+        "Quota istruttrice 40%": round(money(x.get("amount", 0)) * instructor_share(), 2),
         "Quota BodyCenter 60%": round(money(x.get("amount", 0)) * gym_share(), 2),
         "Liquidazione": "Liquidata" if x.get("settlement_id") else ("Da liquidare" if to_bool(x.get("paid", False)) else "Da incassare"),
         "Note": x.get("note", ""),
