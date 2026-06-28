@@ -330,7 +330,14 @@ def _render_planning_view(data, rows, title):
     st.markdown(f"### {title}")
     today_key = date.today().isoformat()
     today_rows = [b for b in rows if b.get("date") == today_key]
-    week_rows = [b for b in rows if parse_date(b.get("date")) <= date.today() + timedelta(days=7)] if rows else []
+    week_limit = date.today() + timedelta(days=7)
+    week_rows = []
+    for b in rows:
+        try:
+            if parse_date(b.get("date")) <= week_limit:
+                week_rows.append(b)
+        except Exception:
+            pass
     waiting = [b for b in rows if b.get("status") == "Lista attesa"]
     a, b, c = st.columns(3)
     a.metric("Oggi", len(today_rows))
@@ -340,23 +347,30 @@ def _render_planning_view(data, rows, title):
         st.info("Nessun prossimo impegno nel periodo selezionato.")
         return
 
-    slot_map = {}
+    day_map = {}
     for r in rows:
-        key = (r.get("date", ""), r.get("time", ""), r.get("instructor", ""))
-        slot_map.setdefault(key, []).append(r)
-    st.markdown("#### Prossimi slot")
-    for idx, ((d, t, instr), group) in enumerate(slot_map.items()):
-        if idx >= 12:
-            break
-        conf = [x for x in group if x.get("status") == "Confermata"]
-        wait = [x for x in group if x.get("status") == "Lista attesa"]
-        posti = max(CAPACITY - len(conf), 0)
+        day_map.setdefault(r.get("date", ""), []).append(r)
+
+    st.markdown("#### Planning per giorno")
+    for day in sorted(day_map.keys()):
+        day_rows = day_map[day]
+        slot_map = {}
+        for r in day_rows:
+            key = (r.get("time", ""), r.get("instructor", ""))
+            slot_map.setdefault(key, []).append(r)
         with st.container(border=True):
-            st.markdown(f"**{date_label_it(d)} · {t} · {instr}**")
-            st.caption(f"Confermate: {len(conf)}/{CAPACITY} · Posti liberi: {posti} · Attesa: {len(wait)}")
-            st.write("; ".join([x.get("name", "") for x in conf]) or "Nessun confermato")
-            if wait:
-                st.caption("Lista attesa: " + "; ".join([x.get("name", "") for x in wait]))
+            st.markdown(f"### {date_label_it(day)}")
+            for idx, ((t, instr), group) in enumerate(sorted(slot_map.items(), key=lambda item: (item[0][0], item[0][1]))):
+                conf = [x for x in group if x.get("status") == "Confermata"]
+                wait = [x for x in group if x.get("status") == "Lista attesa"]
+                posti = max(CAPACITY - len(conf), 0)
+                st.markdown(f"**{t} · {instr}**")
+                st.caption(f"Confermate: {len(conf)}/{CAPACITY} · Posti liberi: {posti} · Attesa: {len(wait)}")
+                st.write("; ".join([x.get("name", "") for x in conf]) or "Nessun confermato")
+                if wait:
+                    st.caption("Lista attesa: " + "; ".join([x.get("name", "") for x in wait]))
+                if idx < len(slot_map) - 1:
+                    st.divider()
     st.markdown("#### Elenco rapido")
     st.dataframe(_planning_table(rows), use_container_width=True, hide_index=True)
 
@@ -443,10 +457,12 @@ elif section == "Incassi":
 elif section == "Archivio":
     render_archive(data, sha)
 '''
-    pos = s.rfind('if section == "Settimana":')
+    pos = s.rfind('if section == "Planning":')
+    if pos == -1:
+        pos = s.rfind('if section == "Settimana":')
     if pos != -1:
         s = s[:pos] + dispatch
-    elif 'if section == "Planning":' not in s:
+    else:
         s += "\n" + dispatch
 
     p.write_text(s, encoding="utf-8")
