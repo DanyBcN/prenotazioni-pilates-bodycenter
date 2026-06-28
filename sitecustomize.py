@@ -2,11 +2,11 @@ from pathlib import Path
 import re
 
 
-def _rf(s, name, repl):
-    m = re.search(rf"(^|\n)def {name}\([^\n]*\):\n.*?(?=\n\ndef |\n\n# -----------------------------|\Z)", s, re.S)
+def _rf(src, name, replacement):
+    m = re.search(rf"(^|\n)def {name}\([^\n]*\):\n.*?(?=\n\ndef |\n\n# -----------------------------|\Z)", src, flags=re.S)
     if not m:
-        return s
-    return s[:m.start()] + ("\n" if m.group(1) else "") + repl.rstrip() + s[m.end():]
+        return src
+    return src[:m.start()] + ("\n" if m.group(1) else "") + replacement.rstrip() + src[m.end():]
 
 
 def _patch_app():
@@ -256,7 +256,7 @@ def _planning_table(rows):
     return pd.DataFrame([{"Quando": f"{date_label_it(b.get('date'))} · {b.get('time','')}", "Istruttrice": b.get("instructor", ""), "Cliente": b.get("name", ""), "Telefono": b.get("phone", ""), "Stato": b.get("status", ""), "Pagato": "Sì" if to_bool(b.get("paid", False)) else "No"} for b in rows])
 
 
-def _render_planning_view(data, rows, title, days=14):
+def _render_planning_view(data, rows, title, days=14, show_instructor=True):
     st.markdown(f"### {title}")
     today = date.today()
     all_days = [(today + timedelta(days=i)).isoformat() for i in range(days)]
@@ -277,7 +277,8 @@ def _render_planning_view(data, rows, title, days=14):
             conf = [x for x in group if x.get("status") == "Confermata"]
             wait = [x for x in group if x.get("status") == "Lista attesa"]
             names = ", ".join([x.get('name','') for x in conf]) or '—'
-            lines.append(f"<div class='slot'><b>{_h(t)}</b> <span>{_h(instr)}</span> <em>{len(conf)}/{CAPACITY} · lib {max(CAPACITY-len(conf),0)}" + (f" · att {len(wait)}" if wait else "") + f"</em><br><small>{_h(names)}</small></div>")
+            instr_txt = f" <span>{_h(instr)}</span>" if show_instructor and instr else ""
+            lines.append(f"<div class='slot'><b>{_h(t)}</b>{instr_txt} <em>{len(conf)}/{CAPACITY} · lib {max(CAPACITY-len(conf),0)}" + (f" · att {len(wait)}" if wait else "") + f"</em><br><small>{_h(names)}</small></div>")
         body = "".join(lines) if lines else "<div class='empty-text'>—</div>"
         cards.append(f"<div class='day-card{' empty' if not lines else ''}'><div class='day-title'>{_h(date_label_it(d))}</div>{body}</div>")
     css = "<style>.plan-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:7px}.day-card{border:1px solid #d9dde3;border-radius:10px;padding:8px 10px;background:#fff;min-height:76px}.day-card.empty{background:#fafafa;color:#9aa0a6}.day-title{font-weight:700;font-size:.92rem;margin-bottom:5px}.slot{font-size:.84rem;line-height:1.18;margin:3px 0 5px;padding-bottom:4px;border-bottom:1px solid #eef0f2}.slot:last-child{border-bottom:0}.slot em{font-style:normal;color:#707782;font-size:.78rem}.slot small{font-size:.78rem}</style>"
@@ -316,10 +317,7 @@ def personal_planning_pdf_bytes(data, instr, days=14):
     header = Table([[logo_cell, Paragraph(f"Planning personale - {instr}", title_style)], ["", Paragraph(f"Periodo: {date_it(all_days[0])} - {date_it(all_days[-1])}", normal)]], colWidths=[4*cm, 22*cm])
     header.setStyle(TableStyle([("VALIGN", (0,0), (-1,-1), "MIDDLE"), ("BOTTOMPADDING", (0,0), (-1,-1), 5)]))
     story += [header, Spacer(1, 0.15*cm)]
-    summary = Table([
-        ["Mio incasso 40%", "Quota palestra 60%", "Mio già pagato", "Mio da incassare"],
-        [f"€ {q40:.2f}", f"€ {q60:.2f}", f"€ {paid40:.2f}", f"€ {q40-paid40:.2f}"],
-    ], colWidths=[6.5*cm]*4)
+    summary = Table([["Mio incasso 40%", "Quota palestra 60%", "Mio già pagato", "Mio da incassare"], [f"€ {q40:.2f}", f"€ {q60:.2f}", f"€ {paid40:.2f}", f"€ {q40-paid40:.2f}"]], colWidths=[6.5*cm]*4)
     summary.setStyle(TableStyle([("BACKGROUND", (0,0), (-1,0), colors.HexColor(LIGHT_GREEN)), ("TEXTCOLOR", (0,0), (-1,0), colors.HexColor(DARK)), ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"), ("FONTNAME", (0,1), (-1,1), "Helvetica-Bold"), ("FONTSIZE", (0,0), (-1,-1), 10), ("ALIGN", (0,0), (-1,-1), "CENTER"), ("BOX", (0,0), (-1,-1), 0.6, colors.HexColor("#cfd8d3")), ("INNERGRID", (0,0), (-1,-1), 0.3, colors.HexColor("#dfe7e2")), ("PADDING", (0,0), (-1,-1), 7)]))
     story += [summary, Spacer(1, 0.25*cm)]
     table_rows = [["Data", "Ora", "Cliente", "Telefono", "Pagato", "Quota 40%", "Palestra 60%", "Note"]]
@@ -331,16 +329,7 @@ def personal_planning_pdf_bytes(data, instr, days=14):
         first = True
         for b in day_rows:
             am = money(b.get("amount", 0))
-            table_rows.append([
-                Paragraph(date_label_it(d) if first else "", small),
-                Paragraph(str(b.get("time", "")), small),
-                Paragraph(_h(b.get("name", "")), small),
-                Paragraph(_h(b.get("phone", "")), small),
-                "Sì" if to_bool(b.get("paid", False)) else "No",
-                f"€ {am*instructor_share():.2f}",
-                f"€ {am*gym_share():.2f}",
-                Paragraph(_h(b.get("note", "")), small),
-            ])
+            table_rows.append([Paragraph(date_label_it(d) if first else "", small), Paragraph(str(b.get("time", "")), small), Paragraph(_h(b.get("name", "")), small), Paragraph(_h(b.get("phone", "")), small), "Sì" if to_bool(b.get("paid", False)) else "No", f"€ {am*instructor_share():.2f}", f"€ {am*gym_share():.2f}", Paragraph(_h(b.get("note", "")), small)])
             first = False
     tbl = Table(table_rows, repeatRows=1, colWidths=[3.0*cm, 1.6*cm, 4.3*cm, 3.0*cm, 1.6*cm, 2.3*cm, 2.5*cm, 6.5*cm])
     tbl.setStyle(TableStyle([("BACKGROUND", (0,0), (-1,0), colors.HexColor(DARK)), ("TEXTCOLOR", (0,0), (-1,0), colors.white), ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"), ("FONTSIZE", (0,0), (-1,-1), 7), ("VALIGN", (0,0), (-1,-1), "TOP"), ("GRID", (0,0), (-1,-1), 0.25, colors.HexColor("#d9dde3")), ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, colors.HexColor("#f8faf9")]), ("PADDING", (0,0), (-1,-1), 4)]))
@@ -361,15 +350,15 @@ def render_planning(data, sha=None):
     if is_admin():
         vista = st.selectbox("Vista", ["Tutte", *INSTRUCTORS], key="planning_admin_view")
         instr = None if vista == "Tutte" else vista
-        _render_planning_view(data, _planning_base_rows(data, giorni, instr), f"Planning {vista}", giorni)
+        _render_planning_view(data, _planning_base_rows(data, giorni, instr), f"Planning {vista}", giorni, show_instructor=True)
         return
     instr = instructor_name_from_user()
     render_personal_planning_download(data, instr, giorni)
     tab_miei, tab_tutti = st.tabs(["I miei impegni", "Tutti gli impegni"])
     with tab_miei:
-        _render_planning_view(data, _planning_base_rows(data, giorni, instr), f"Prossimi impegni {instr}", giorni)
+        _render_planning_view(data, _planning_base_rows(data, giorni, instr), f"Prossimi impegni {instr}", giorni, show_instructor=False)
     with tab_tutti:
-        _render_planning_view(data, _planning_base_rows(data, giorni, None), "Planning completo", giorni)
+        _render_planning_view(data, _planning_base_rows(data, giorni, None), "Planning completo", giorni, show_instructor=True)
 '''
     boot = "\n\n# -----------------------------\n# App bootstrap"
     for token in ["\n\ndef settlement_bookings", "\n\ndef unsettled_bookings", "\n\ndef render_settlements", "\n\ndef render_planning"]:
