@@ -67,13 +67,13 @@ def gym_share():
 
 
 def visible_sections():
-    return ["Settimana", "Prenota", "Clienti", "Cerca", "Incassi", "Archivio"]
+    return ["Planning", "Settimana", "Prenota", "Clienti", "Cerca", "Incassi", "Archivio"]
 '''
     if "def configured_users():" not in s and marker in s:
         s = s.replace(marker, helper_block, 1)
     elif "def visible_sections():" in s:
         s = _replace_function(s, "visible_sections", '''def visible_sections():
-    return ["Settimana", "Prenota", "Clienti", "Cerca", "Incassi", "Archivio"]''')
+    return ["Planning", "Settimana", "Prenota", "Clienti", "Cerca", "Incassi", "Archivio"]''')
 
     s = s.replace('''    data.setdefault("bookings", [])
     data.setdefault("clients", [])''', '''    data.setdefault("bookings", [])
@@ -106,7 +106,7 @@ def visible_sections():
                 st.error("Utente o password non corretti")
     return False''')
 
-    finance_code = '''
+    module_code = '''
 
 def settlement_bookings(data, instructor=None, paid=None):
     rows = []
@@ -294,17 +294,98 @@ def render_instructor_archive(data):
         "Note": x.get("note", ""),
     } for x in rows])
     st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+def _planning_base_rows(data, days, instructor=None):
+    today = date.today()
+    end = today + timedelta(days=days)
+    out = []
+    for b in data.get("bookings", []):
+        if b.get("status") == "Annullata":
+            continue
+        if instructor and b.get("instructor") != instructor:
+            continue
+        try:
+            d = parse_date(b.get("date"))
+        except Exception:
+            continue
+        if today <= d <= end:
+            out.append(b)
+    return sorted(out, key=lambda x: (str(x.get("date", "")), str(x.get("time", "")), str(x.get("instructor", "")), str(x.get("name", ""))))
+
+
+def _planning_table(rows):
+    return pd.DataFrame([{
+        "Quando": f"{date_label_it(b.get('date'))} · {b.get('time','')}",
+        "Istruttrice": b.get("instructor", ""),
+        "Cliente": b.get("name", ""),
+        "Telefono": b.get("phone", ""),
+        "Stato": b.get("status", ""),
+        "Pagato": "Sì" if to_bool(b.get("paid", False)) else "No",
+        "Note": b.get("note", ""),
+    } for b in rows])
+
+
+def _render_planning_view(data, rows, title):
+    st.markdown(f"### {title}")
+    today_key = date.today().isoformat()
+    today_rows = [b for b in rows if b.get("date") == today_key]
+    week_rows = [b for b in rows if parse_date(b.get("date")) <= date.today() + timedelta(days=7)] if rows else []
+    waiting = [b for b in rows if b.get("status") == "Lista attesa"]
+    a, b, c = st.columns(3)
+    a.metric("Oggi", len(today_rows))
+    b.metric("Prossimi 7 giorni", len(week_rows))
+    c.metric("Lista attesa", len(waiting))
+    if not rows:
+        st.info("Nessun prossimo impegno nel periodo selezionato.")
+        return
+
+    slot_map = {}
+    for r in rows:
+        key = (r.get("date", ""), r.get("time", ""), r.get("instructor", ""))
+        slot_map.setdefault(key, []).append(r)
+    st.markdown("#### Prossimi slot")
+    for idx, ((d, t, instr), group) in enumerate(slot_map.items()):
+        if idx >= 12:
+            break
+        conf = [x for x in group if x.get("status") == "Confermata"]
+        wait = [x for x in group if x.get("status") == "Lista attesa"]
+        posti = max(CAPACITY - len(conf), 0)
+        with st.container(border=True):
+            st.markdown(f"**{date_label_it(d)} · {t} · {instr}**")
+            st.caption(f"Confermate: {len(conf)}/{CAPACITY} · Posti liberi: {posti} · Attesa: {len(wait)}")
+            st.write("; ".join([x.get("name", "") for x in conf]) or "Nessun confermato")
+            if wait:
+                st.caption("Lista attesa: " + "; ".join([x.get("name", "") for x in wait]))
+    st.markdown("#### Elenco rapido")
+    st.dataframe(_planning_table(rows), use_container_width=True, hide_index=True)
+
+
+def render_planning(data):
+    st.subheader("Planning prossimi impegni")
+    giorni = st.selectbox("Periodo", [7, 14, 30, 60], index=1, format_func=lambda x: f"Prossimi {x} giorni")
+    if is_admin():
+        vista = st.selectbox("Vista", ["Tutte", *INSTRUCTORS], key="planning_admin_view")
+        instr = None if vista == "Tutte" else vista
+        _render_planning_view(data, _planning_base_rows(data, giorni, instr), f"Planning {vista}")
+        return
+    instr = instructor_name_from_user()
+    tab_miei, tab_tutti = st.tabs(["I miei impegni", "Tutti gli impegni"])
+    with tab_miei:
+        _render_planning_view(data, _planning_base_rows(data, giorni, instr), f"Prossimi impegni {instr}")
+    with tab_tutti:
+        _render_planning_view(data, _planning_base_rows(data, giorni, None), "Planning completo")
 '''
 
     boot = "\n\n# -----------------------------\n# App bootstrap"
-    for token in ["\n\ndef settlement_bookings", "\n\ndef unsettled_bookings", "\n\ndef render_settlements"]:
+    for token in ["\n\ndef settlement_bookings", "\n\ndef unsettled_bookings", "\n\ndef render_settlements", "\n\ndef render_planning"]:
         if token in s:
             start = s.index(token)
             end = s.index(boot, start)
-            s = s[:start] + finance_code + s[end:]
+            s = s[:start] + module_code + s[end:]
             break
     else:
-        s = s.replace(boot, finance_code + boot, 1)
+        s = s.replace(boot, module_code + boot, 1)
 
     s = s.replace('''def render_archive(data, sha):
     if not is_admin():
@@ -322,22 +403,15 @@ def render_instructor_archive(data):
         return
     if render_archive_open_client(data, sha):''')
 
-    s = s.replace('''if "_next_section" in st.session_state:
-    st.session_state["section"] = st.session_state.pop("_next_section")
-if "section" not in st.session_state or st.session_state["section"] not in SECTIONS:
-    st.session_state["section"] = "Settimana"
-
-section = st.radio("Sezione", SECTIONS, horizontal=True, key="section", label_visibility="collapsed")''', '''allowed_sections = visible_sections()
+    s = re.sub(r'\ncol_access, col_logout = st\.columns\(\[4, 1\]\).*?st\.rerun\(\)', '', s, flags=re.S)
+    menu_block = '''allowed_sections = visible_sections()
 if "_next_section" in st.session_state:
     nxt = st.session_state.pop("_next_section")
-    st.session_state["section"] = nxt if nxt in allowed_sections else "Settimana"
+    st.session_state["section"] = nxt if nxt in allowed_sections else "Planning"
 if "section" not in st.session_state or st.session_state["section"] not in allowed_sections:
-    st.session_state["section"] = "Settimana"
+    st.session_state["section"] = "Planning"
 
-section = st.radio("Sezione", allowed_sections, horizontal=True, key="section", label_visibility="collapsed")''')
-
-    logout_anchor = 'section = st.radio("Sezione", allowed_sections, horizontal=True, key="section", label_visibility="collapsed")'
-    logout_block = logout_anchor + '''
+section = st.radio("Sezione", allowed_sections, horizontal=True, key="section", label_visibility="collapsed")
 
 col_access, col_logout = st.columns([4, 1])
 with col_access:
@@ -350,18 +424,30 @@ with col_logout:
         for k in ["authenticated", "current_user", "current_role", "section", "client_open_id", "archive_open_client_id", "archive_open_select"]:
             st.session_state.pop(k, None)
         st.rerun()'''
-    if 'key="logout_user_button"' not in s and logout_anchor in s:
-        s = s.replace(logout_anchor, logout_block, 1)
+    m = re.search(r'(?:allowed_sections = visible_sections\(\)|if "_next_section" in st\.session_state:).*?section = st\.radio\("Sezione", (?:allowed_sections|SECTIONS), horizontal=True, key="section", label_visibility="collapsed"\)', s, flags=re.S)
+    if m:
+        s = s[:m.start()] + menu_block + s[m.end():]
 
-    s = s.replace('''elif section == "Cerca":
-    render_search(data)
-elif section == "Archivio":
-    render_archive(data, sha)''', '''elif section == "Cerca":
+    dispatch = '''if section == "Planning":
+    render_planning(data)
+elif section == "Settimana":
+    render_week(data, sha)
+elif section == "Prenota":
+    render_booking(data, sha)
+elif section == "Clienti":
+    render_clients(data, sha)
+elif section == "Cerca":
     render_search(data)
 elif section == "Incassi":
     render_settlements(data, sha)
 elif section == "Archivio":
-    render_archive(data, sha)''')
+    render_archive(data, sha)
+'''
+    pos = s.rfind('if section == "Settimana":')
+    if pos != -1:
+        s = s[:pos] + dispatch
+    elif 'if section == "Planning":' not in s:
+        s += "\n" + dispatch
 
     p.write_text(s, encoding="utf-8")
 
