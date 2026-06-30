@@ -105,6 +105,118 @@ def visible_sections():
                 st.error("Utente o password non corretti")
     return False''')
 
+    # Le capienze devono essere per istruttrice: Grazia e Alice possono avere lo stesso orario senza sovrapporsi.
+    s = _rf(s, "slot_rows", '''def slot_rows(data, d, t, include_cancelled=False, instructor=None):
+    rows = []
+    for b in data.get("bookings", []):
+        if b.get("date") != date_key(d) or b.get("time") != t:
+            continue
+        if instructor and b.get("instructor") != instructor:
+            continue
+        if not include_cancelled and b.get("status") == "Annullata":
+            continue
+        rows.append(b)
+    return sorted(rows, key=lambda x: x.get("created_at", ""))''')
+
+    s = _rf(s, "confirmed_count", '''def confirmed_count(data, d, t, exclude_id=None, instructor=None):
+    return sum(1 for b in slot_rows(data, d, t, instructor=instructor) if b.get("status") == "Confermata" and b.get("id") != exclude_id)''')
+
+    s = _rf(s, "auto_status", '''def auto_status(data, d, t, instructor=None):
+    return "Confermata" if confirmed_count(data, d, t, instructor=instructor) < CAPACITY else "Lista attesa"''')
+
+    s = _rf(s, "slot_status", '''def slot_status(data, d, t, instructor=None):
+    rows = slot_rows(data, d, t, instructor=instructor)
+    conf = [b for b in rows if b.get("status") == "Confermata"]
+    wait = [b for b in rows if b.get("status") == "Lista attesa"]
+    return len(conf), len(wait), conf, wait''')
+
+    s = _rf(s, "create_booking", '''def create_booking(data, cid, d, t, amount, paid, instructor, note):
+    c = get_client(data, cid)
+    if not c:
+        raise ValueError("Cliente non trovato.")
+    b = {
+        "id": new_id("b_"),
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "client_id": cid,
+        "date": date_key(d),
+        "day": DAY_NAMES[d.weekday()],
+        "time": t,
+        "name": full_name(c),
+        "phone": c.get("phone", ""),
+        "email": c.get("email", ""),
+        "note": note.strip(),
+        "status": auto_status(data, d, t, instructor),
+        "amount": money(amount),
+        "paid": bool(paid),
+        "instructor": instructor,
+        "created_by": current_user(),
+    }
+    data["bookings"].append(b)
+    return b''')
+
+    s = _rf(s, "change_status", '''def change_status(data, bid, status):
+    for b in data.get("bookings", []):
+        if b.get("id") == bid:
+            d, t = parse_date(b["date"]), b["time"]
+            instr = b.get("instructor", "")
+            if status == "Confermata" and confirmed_count(data, d, t, bid, instr) >= CAPACITY:
+                st.error("Lezione già piena (4/4) per questa istruttrice.")
+                return False
+            b["status"] = status
+            return True
+    return False''')
+
+    s = _rf(s, "render_booking", '''def render_booking(data, sha):
+    st.subheader("Prenota")
+    mode = st.radio("Cliente", ["Seleziona da archivio", "Nuovo cliente"], horizontal=True)
+    cid = None
+    if mode == "Seleziona da archivio":
+        opts = client_options(data)
+        if opts:
+            cid = option_to_client_id(st.selectbox("Cliente", opts))
+            c = get_client(data, cid)
+            st.caption(f"Telefono: {c.get('phone','')} · Email: {c.get('email','')}")
+        else:
+            st.warning("Nessun cliente in archivio.")
+    else:
+        a, b = st.columns(2)
+        last = a.text_input("Cognome")
+        first = b.text_input("Nome")
+        c, d = st.columns(2)
+        phone = c.text_input("Telefono")
+        email = d.text_input("Email")
+        birth = st.text_input("Data di nascita", placeholder="gg-mm-aaaa")
+        notes = st.text_area("Note cliente")
+        if st.button("Salva nuovo cliente"):
+            ok, msg, cid = add_client(data, first, last, phone, email, notes, birth)
+            if ok:
+                save_and_rerun(data, sha, "Add client")
+            else:
+                st.error(msg)
+
+    if cid:
+        st.markdown("### Dati prenotazione")
+        a, b = st.columns(2)
+        d = parse_date(a.date_input("Data", value=date.today(), min_value=date.today(), format="DD/MM/YYYY", key="booking_date"))
+        ts = times_for(d)
+        if not ts:
+            st.warning("Nessun orario previsto per questa data.")
+            return
+        t = b.selectbox("Orario", ts)
+        default_instr = instructor_name_from_user()
+        default_index = INSTRUCTORS.index(default_instr) if default_instr in INSTRUCTORS else 0
+        a, b, c = st.columns(3)
+        amount = a.number_input("Importo (€)", min_value=0.0, value=0.0, step=1.0, format="%.2f")
+        paid = b.checkbox("Pagato")
+        instr = c.selectbox("Istruttrice", INSTRUCTORS, index=default_index)
+        note = st.text_area("Note prenotazione")
+        n = confirmed_count(data, d, t, instructor=instr)
+        st.info(f"{instr} · {t}: {n}/{CAPACITY} confermate · stato automatico: {auto_status(data, d, t, instr)}")
+        if st.button("Salva prenotazione", type="primary"):
+            bk = create_booking(data, cid, d, t, amount, paid, instr, note)
+            st.session_state["_next_section"] = "Planning"
+            save_and_rerun(data, sha, f"Add booking {bk['name']}")''')
+
     module = '''
 def settlement_bookings(data, instructor=None, paid=None):
     out = []
@@ -354,11 +466,11 @@ def render_planning(data, sha=None):
         return
     instr = instructor_name_from_user()
     render_personal_planning_download(data, instr, giorni)
-    tab_miei, tab_tutti = st.tabs(["I miei impegni", "Tutti gli impegni"])
+    tab_all, tab_miei = st.tabs(["Planning completo", "I miei impegni"])
+    with tab_all:
+        _render_planning_view(data, _planning_base_rows(data, giorni, None), "Planning completo", giorni, show_instructor=True)
     with tab_miei:
         _render_planning_view(data, _planning_base_rows(data, giorni, instr), f"Prossimi impegni {instr}", giorni, show_instructor=False)
-    with tab_tutti:
-        _render_planning_view(data, _planning_base_rows(data, giorni, None), "Planning completo", giorni, show_instructor=True)
 '''
     boot = "\n\n# -----------------------------\n# App bootstrap"
     for token in ["\n\ndef settlement_bookings", "\n\ndef unsettled_bookings", "\n\ndef render_settlements", "\n\ndef render_planning"]:
