@@ -375,7 +375,7 @@ def update_amount(data, booking_id, new_amount, note=""):
             if b.get("settlement_id"):
                 return False, "Quota già chiusa: non posso modificare l'importo."
             if is_gift(b):
-                return False, "Seduta omaggio: importo bloccato a € 0."
+                return False, "Seduta omaggio: togli prima la spunta omaggio."
             old = money(b.get("amount", 0))
             new = money(new_amount)
             b["amount"] = new
@@ -385,7 +385,48 @@ def update_amount(data, booking_id, new_amount, note=""):
             if note.strip():
                 log += f" - {note.strip()}"
             b["note"] = (b.get("note", "") + " | " if b.get("note") else "") + log
-            return True, f"Importo aggiornato: € {old:.2f} → € {new:.2f}."
+            return True, "Importo aggiornato."
+    return False, "Prenotazione non trovata."
+
+
+def mark_gift(data, booking_id, note=""):
+    for b in data.get("bookings", []):
+        if b.get("id") == booking_id:
+            if b.get("settlement_id"):
+                return False, "Quota già chiusa: non posso trasformarla in omaggio."
+            b["gift"] = True
+            b["amount"] = 0.0
+            b["paid"] = True
+            b["paid_to_gym_at"] = ""
+            b["paid_to_gym_by"] = current_user()
+            b["amount_updated_at"] = datetime.now().isoformat(timespec="seconds")
+            b["amount_updated_by"] = current_user()
+            log = "Segnata come seduta omaggio / prova gratuita"
+            if note.strip():
+                log += f" - {note.strip()}"
+            if "omaggio" not in str(b.get("note", "")).lower():
+                b["note"] = (b.get("note", "") + " | " if b.get("note") else "") + log
+            return True, "Prenotazione segnata come omaggio."
+    return False, "Prenotazione non trovata."
+
+
+def unmark_gift(data, booking_id, new_amount, paid=False, note=""):
+    for b in data.get("bookings", []):
+        if b.get("id") == booking_id:
+            if b.get("settlement_id"):
+                return False, "Quota già chiusa: non posso modificarla."
+            b["gift"] = False
+            b["amount"] = money(new_amount)
+            b["paid"] = bool(paid)
+            b["paid_to_gym_at"] = datetime.now().isoformat(timespec="seconds") if paid else ""
+            b["paid_to_gym_by"] = current_user() if paid else ""
+            b["amount_updated_at"] = datetime.now().isoformat(timespec="seconds")
+            b["amount_updated_by"] = current_user()
+            log = f"Tolto omaggio e impostato importo € {money(new_amount):.2f} da {current_user()}"
+            if note.strip():
+                log += f" - {note.strip()}"
+            b["note"] = (b.get("note", "") + " | " if b.get("note") else "") + log
+            return True, "Omaggio tolto e importo aggiornato."
     return False, "Prenotazione non trovata."
 
 
@@ -473,11 +514,11 @@ def login():
 def render_incassi(data, sha):
     instr = None if is_admin() else current_instructor()
     rows = open_rows(data, instr)
+    all_rows = sorted(rows, key=lambda x: (str(x.get("date", "")), str(x.get("time", "")), str(x.get("name", ""))))
     pay_rows = [b for b in rows if not is_gift(b)]
     gift_rows = [b for b in rows if is_gift(b)]
     unpaid = sorted([b for b in pay_rows if not as_bool(b.get("paid", False))], key=lambda x: (str(x.get("date", "")), str(x.get("time", "")), str(x.get("name", ""))))
     paid = sorted([b for b in pay_rows if as_bool(b.get("paid", False))], key=lambda x: (str(x.get("date", "")), str(x.get("time", "")), str(x.get("name", ""))))
-    editable = sorted(pay_rows, key=lambda x: (str(x.get("date", "")), str(x.get("time", "")), str(x.get("name", ""))))
     totale = sum(money(b.get("amount", 0)) for b in pay_rows)
     da_incassare = sum(money(b.get("amount", 0)) for b in unpaid)
     incassato = sum(money(b.get("amount", 0)) for b in paid)
@@ -489,22 +530,34 @@ def render_incassi(data, sha):
     c.metric("Incassato palestra", f"€ {incassato:.2f}")
     d.metric("Omaggio", len(gift_rows))
 
-    st.markdown("### Azione unica: importo e pagamento")
+    st.markdown("### Azione unica")
     with st.container(border=True):
-        if editable:
-            idx = st.selectbox("Prenotazione", range(len(editable)), format_func=lambda i: row_label(editable[i]), key="cash_main_select")
-            selected = editable[idx]
-            c1, c2 = st.columns([1, 1])
-            new_amount = c1.number_input("Importo totale (€)", min_value=0.0, value=float(money(selected.get("amount", 0))), step=1.0, format="%.2f", key="cash_main_amount")
-            mark_now = c2.checkbox("Incassato dalla palestra", value=as_bool(selected.get("paid", False)), key="cash_main_paid")
-            note = st.text_input("Nota opzionale", placeholder="es. pacchetto 5 sedute", key="cash_main_note")
+        st.caption("Scegli la prenotazione e correggi tutto da qui: importo, pagamento oppure omaggio.")
+        if all_rows:
+            idx = st.selectbox("Prenotazione", range(len(all_rows)), format_func=lambda i: row_label(all_rows[i]), key="cash_main_select")
+            selected = all_rows[idx]
+            current_gift = is_gift(selected)
+            c1, c2, c3 = st.columns([1, 1, 1])
+            gift_now = c1.checkbox("Seduta omaggio / prova", value=current_gift, key="cash_main_gift")
+            amount_value = 0.0 if gift_now else float(money(selected.get("amount", 0)))
+            new_amount = c2.number_input("Importo totale (€)", min_value=0.0, value=amount_value, step=1.0, format="%.2f", disabled=gift_now, key="cash_main_amount")
+            mark_now = c3.checkbox("Incassato palestra", value=True if gift_now else as_bool(selected.get("paid", False)), disabled=gift_now, key="cash_main_paid")
+            note = st.text_input("Nota opzionale", placeholder="es. pacchetto 5 sedute / prova gratuita", key="cash_main_note")
             if st.button("Salva", type="primary", key="cash_main_save", use_container_width=is_mobile()):
-                ok, msg = update_amount(data, selected.get("id"), new_amount, note)
-                if ok and mark_now and not as_bool(selected.get("paid", False)):
-                    ok, msg = mark_paid(data, selected.get("id"))
+                if selected.get("settlement_id"):
+                    st.error("Quota già chiusa: non posso modificare questa prenotazione.")
+                    return
+                if gift_now:
+                    ok, msg = mark_gift(data, selected.get("id"), note)
+                elif current_gift and not gift_now:
+                    ok, msg = unmark_gift(data, selected.get("id"), new_amount, mark_now, note)
+                else:
+                    ok, msg = update_amount(data, selected.get("id"), new_amount, note)
+                    if ok and mark_now and not as_bool(selected.get("paid", False)):
+                        ok, msg = mark_paid(data, selected.get("id"))
                 if ok:
-                    save_data(data, sha, "Save amount and payment")
-                    st.success("Salvato")
+                    save_data(data, sha, "Save booking payment status")
+                    st.success("Salvato.")
                     go("Incassi")
                 else:
                     st.error(msg)
@@ -532,7 +585,7 @@ def render_incassi(data, sha):
         st.dataframe(table_df(unpaid), use_container_width=True, hide_index=True) if unpaid else st.success("Nessun importo da incassare.")
     with st.expander("Incassati dalla palestra", expanded=True):
         st.dataframe(table_df(paid), use_container_width=True, hide_index=True) if paid else st.info("Nessun incasso registrato.")
-    with st.expander("Sedute omaggio", expanded=False):
+    with st.expander("Sedute omaggio", expanded=True):
         st.dataframe(table_df(gift_rows), use_container_width=True, hide_index=True) if gift_rows else st.info("Nessuna seduta omaggio.")
     hist = []
     for x in data.get("settlements", []):
