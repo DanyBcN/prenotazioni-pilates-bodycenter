@@ -84,6 +84,7 @@ def visible_sections():
         b.setdefault("date", date.today().isoformat())''', '''        b.setdefault("status", "Confermata")
         b.setdefault("settlement_id", "")
         b.setdefault("gym_delivered_at", "")
+        b.setdefault("gift", False)
         b.setdefault("date", date.today().isoformat())''', 1)
 
     s = _rf(s, "login", '''def login():
@@ -137,11 +138,16 @@ def visible_sections():
             b["status"] = status
             return True
     return False''')
-    s = _rf(s, "create_booking", '''def create_booking(data, cid, d, t, amount, paid, instructor, note):
+    s = _rf(s, "create_booking", '''def create_booking(data, cid, d, t, amount, paid, instructor, note, gift=False):
     c = get_client(data, cid)
     if not c:
         raise ValueError("Cliente non trovato.")
-    b = {"id": new_id("b_"), "created_at": datetime.now().isoformat(timespec="seconds"), "client_id": cid, "date": date_key(d), "day": DAY_NAMES[d.weekday()], "time": t, "name": full_name(c), "phone": c.get("phone", ""), "email": c.get("email", ""), "note": note.strip(), "status": auto_status(data, d, t, instructor), "amount": money(amount), "paid": bool(paid), "paid_to_gym_at": datetime.now().isoformat(timespec="seconds") if paid else "", "paid_to_gym_by": current_user() if paid else "", "gym_delivered_at": "", "gym_delivered_by": "", "settlement_id": "", "instructor": instructor, "created_by": current_user()}
+    amount = 0.0 if gift else money(amount)
+    paid = True if gift else bool(paid)
+    clean_note = note.strip()
+    if gift and "omaggio" not in clean_note.lower():
+        clean_note = (clean_note + " | " if clean_note else "") + "Seduta omaggio / prova"
+    b = {"id": new_id("b_"), "created_at": datetime.now().isoformat(timespec="seconds"), "client_id": cid, "date": date_key(d), "day": DAY_NAMES[d.weekday()], "time": t, "name": full_name(c), "phone": c.get("phone", ""), "email": c.get("email", ""), "note": clean_note, "status": auto_status(data, d, t, instructor), "amount": amount, "paid": paid, "gift": bool(gift), "paid_to_gym_at": datetime.now().isoformat(timespec="seconds") if paid and not gift else "", "paid_to_gym_by": current_user() if paid and not gift else "", "gym_delivered_at": "", "gym_delivered_by": "", "settlement_id": "", "instructor": instructor, "created_by": current_user()}
     data["bookings"].append(b)
     return b''')
     s = _rf(s, "render_booking", '''def render_booking(data, sha):
@@ -183,23 +189,40 @@ def visible_sections():
         default_instr = instructor_name_from_user()
         default_index = INSTRUCTORS.index(default_instr) if default_instr in INSTRUCTORS else 0
         a, b, c = st.columns(3)
-        amount = a.number_input("Importo (€)", min_value=0.0, value=0.0, step=1.0, format="%.2f")
-        paid = b.checkbox("Incassato dal cliente")
-        instr = c.selectbox("Istruttrice", INSTRUCTORS, index=default_index)
+        gift = a.checkbox("Seduta omaggio / prova gratuita", key="booking_gift")
+        amount = b.number_input("Importo (€)", min_value=0.0, value=0.0, step=1.0, format="%.2f", disabled=gift)
+        paid = c.checkbox("Già incassato dal cliente", disabled=gift)
+        instr = st.selectbox("Istruttrice", INSTRUCTORS, index=default_index)
         note = st.text_area("Note prenotazione")
         n = confirmed_count(data, d, t, instructor=instr)
-        st.info(f"{instr} · {t}: {n}/{CAPACITY} confermate · stato automatico: {auto_status(data, d, t, instr)}")
+        status_txt = "Seduta omaggio" if gift else auto_status(data, d, t, instr)
+        st.info(f"{instr} · {t}: {n}/{CAPACITY} confermate · stato: {status_txt}")
         if st.button("Salva prenotazione", type="primary"):
-            bk = create_booking(data, cid, d, t, amount, paid, instr, note)
+            bk = create_booking(data, cid, d, t, amount, paid, instr, note, gift=gift)
             st.session_state["_next_section"] = "Planning"
             save_and_rerun(data, sha, f"Add booking {bk['name']}")''')
 
-    module = r'''
+    module = '''
+def is_gift_booking(b):
+    return bool(b.get("gift", False)) or str(b.get("type", "")).lower() == "seduta omaggio" or "omaggio" in str(b.get("note", "")).lower()
+
+
+def open_cash_rows(data, instructor=None):
+    rows = []
+    for b in data.get("bookings", []):
+        if b.get("status") == "Annullata" or b.get("settlement_id"):
+            continue
+        if instructor and b.get("instructor") != instructor:
+            continue
+        rows.append(b)
+    return rows
+
+
 def mark_client_collected(data, booking_id):
     for b in data.get("bookings", []):
         if b.get("id") == booking_id:
-            if b.get("status") == "Annullata":
-                return False, "Prenotazione annullata."
+            if is_gift_booking(b):
+                return False, "Questa è una seduta omaggio: non c'è incasso."
             b["paid"] = True
             b["paid_to_gym_at"] = datetime.now().isoformat(timespec="seconds")
             b["paid_to_gym_by"] = current_user()
@@ -210,6 +233,8 @@ def mark_client_collected(data, booking_id):
 def mark_cash_delivered_to_gym(data, booking_id):
     for b in data.get("bookings", []):
         if b.get("id") == booking_id:
+            if is_gift_booking(b):
+                return False, "Seduta omaggio: non c'è incasso da consegnare."
             if not to_bool(b.get("paid", False)):
                 return False, "Prima segna l'incasso cliente."
             b["gym_delivered_at"] = datetime.now().isoformat(timespec="seconds")
@@ -221,6 +246,8 @@ def mark_cash_delivered_to_gym(data, booking_id):
 def mark_share_received(data, booking_id):
     for b in data.get("bookings", []):
         if b.get("id") == booking_id:
+            if is_gift_booking(b):
+                return False, "Seduta omaggio: non genera quota istruttrice."
             if not to_bool(b.get("paid", False)):
                 return False, "Prima segna l'incasso cliente."
             if not b.get("gym_delivered_at"):
@@ -233,7 +260,7 @@ def mark_share_received(data, booking_id):
             b["share_paid_at"] = datetime.now().isoformat(timespec="seconds")
             b["share_paid_by"] = current_user()
             data.setdefault("settlements", []).append({"id": sid, "created_at": b["share_paid_at"], "instructor": b.get("instructor", ""), "gross_amount": round(amount, 2), "instructor_amount": round(amount*instructor_share(), 2), "gym_amount": round(amount*gym_share(), 2), "lessons": 1, "closed_by": current_user(), "booking_id": booking_id})
-            return True, "Quota istruttrice ricevuta segnata."
+            return True, "Quota 40% segnata come pagata/ricevuta."
     return False, "Prenotazione non trovata."
 
 
@@ -242,105 +269,105 @@ def settled_share_total(data, instructor=None):
 
 
 def _pay_label(b):
-    return f"{date_it(b.get('date'))} · {b.get('time','')} · {b.get('instructor','')} · {b.get('name','')}"
+    tag = " · OMAGGIO" if is_gift_booking(b) else f" · € {money(b.get('amount', 0)):.2f}"
+    return f"{date_it(b.get('date'))} · {b.get('time','')} · {b.get('instructor','')} · {b.get('name','')}{tag}"
 
 
-def render_payment_tracking_box(data, sha):
-    with st.expander("Incassi / consegna palestra / quota istruttrice", expanded=True):
-        st.caption("Qui Grazia/Alice segnano: incasso dal cliente, consegna dell'incasso a BodyCenter e quota 40% ricevuta.")
-        instr_user = instructor_name_from_user()
-        open_rows = [b for b in data.get("bookings", []) if b.get("status") != "Annullata" and not b.get("settlement_id")]
-        rows = open_rows if is_admin() else [b for b in open_rows if b.get("instructor") == instr_user]
-        todo1 = sorted([b for b in rows if not to_bool(b.get("paid", False))], key=lambda x:(str(x.get("date","")),str(x.get("time","")),str(x.get("name",""))))
-        todo2 = sorted([b for b in rows if to_bool(b.get("paid", False)) and not b.get("gym_delivered_at")], key=lambda x:(str(x.get("date","")),str(x.get("time","")),str(x.get("name",""))))
-        todo3 = sorted([b for b in rows if to_bool(b.get("paid", False)) and b.get("gym_delivered_at")], key=lambda x:(str(x.get("date","")),str(x.get("time","")),str(x.get("name",""))))
-        st.markdown("**1. Incasso ricevuto dal cliente**")
-        if todo1:
-            i = st.selectbox("Scegli prenotazione da segnare come incassata", range(len(todo1)), format_func=lambda k: _pay_label(todo1[k]), key="cash_client_select")
-            if st.button("Segna incasso cliente", key="cash_client_btn", use_container_width=is_mobile_client()):
-                ok, msg = mark_client_collected(data, todo1[i].get("id"))
+def _cash_df(rows):
+    return pd.DataFrame([{"Data": date_it(x.get("date")), "Ora": x.get("time", ""), "Istruttrice": x.get("instructor", ""), "Cliente": x.get("name", ""), "Tipo": "Seduta omaggio" if is_gift_booking(x) else "Pagamento", "Importo": money(x.get("amount", 0)), "Incassato": "Sì" if to_bool(x.get("paid", False)) else "No", "Consegnato BodyCenter": "Sì" if x.get("gym_delivered_at") else "No", "Quota 40%": round(money(x.get("amount", 0)) * instructor_share(), 2) if not is_gift_booking(x) else 0.0} for x in rows])
+
+
+def render_cash_workflow(data, sha, compact=False):
+    instr = None if is_admin() else instructor_name_from_user()
+    rows = open_cash_rows(data, instr)
+    pay_rows = [b for b in rows if not is_gift_booking(b)]
+    gift_rows = [b for b in rows if is_gift_booking(b)]
+    da_incassare = [b for b in pay_rows if not to_bool(b.get("paid", False))]
+    da_consegnare = [b for b in pay_rows if to_bool(b.get("paid", False)) and not b.get("gym_delivered_at")]
+    consegnato = [b for b in pay_rows if to_bool(b.get("paid", False)) and b.get("gym_delivered_at")]
+    totale = sum(money(b.get("amount", 0)) for b in pay_rows)
+    incassato = sum(money(b.get("amount", 0)) for b in pay_rows if to_bool(b.get("paid", False)))
+    consegnato_tot = sum(money(b.get("amount", 0)) for b in consegnato)
+    quota_da_pagare = consegnato_tot * instructor_share()
+
+    st.markdown("### Gestione incassi")
+    a, b, c, d, e = st.columns(5)
+    a.metric("Incasso totale", f"€ {totale:.2f}")
+    b.metric("Da incassare", f"€ {sum(money(x.get('amount', 0)) for x in da_incassare):.2f}")
+    c.metric("Incassato", f"€ {incassato:.2f}")
+    d.metric("Consegnato palestra", f"€ {consegnato_tot:.2f}")
+    e.metric("Omaggio", len(gift_rows))
+    st.caption("Sequenza: 1) incasso cliente → 2) consegna incasso totale a BodyCenter → 3) BodyCenter paga la quota 40% ad Alice/Grazia.")
+
+    tab1, tab2, tab3, tab4 = st.tabs(["Da incassare", "Da consegnare a BodyCenter", "Quota 40% da pagare/ricevere", "Sedute omaggio"])
+    with tab1:
+        if da_incassare:
+            st.dataframe(_cash_df(da_incassare), use_container_width=True, hide_index=True)
+            i = st.selectbox("Seleziona incasso ricevuto dal cliente", range(len(da_incassare)), format_func=lambda k: _pay_label(da_incassare[k]), key="cash_collect_select")
+            if st.button("Segna come incassato", key="cash_collect_btn", use_container_width=is_mobile_client()):
+                ok, msg = mark_client_collected(data, da_incassare[i].get("id"))
                 if ok:
                     save_data(data, sha, "Mark client cash collected")
                     st.success(msg); st.rerun()
-                else: st.error(msg)
+                else:
+                    st.error(msg)
         else:
-            st.info("Nessun incasso cliente da segnare.")
-        st.markdown("**2. Incasso consegnato a BodyCenter**")
-        if todo2:
-            i = st.selectbox("Scegli incasso consegnato a BodyCenter", range(len(todo2)), format_func=lambda k: _pay_label(todo2[k]) + f" · € {money(todo2[k].get('amount',0)):.2f}", key="cash_deliver_select")
-            if st.button("Segna incasso consegnato a BodyCenter", key="cash_deliver_btn", use_container_width=is_mobile_client()):
-                ok, msg = mark_cash_delivered_to_gym(data, todo2[i].get("id"))
+            st.success("Nessun importo da incassare.")
+    with tab2:
+        if da_consegnare:
+            st.dataframe(_cash_df(da_consegnare), use_container_width=True, hide_index=True)
+            i = st.selectbox("Seleziona incasso consegnato a BodyCenter", range(len(da_consegnare)), format_func=lambda k: _pay_label(da_consegnare[k]), key="cash_deliver_select")
+            if st.button("Segna consegnato a BodyCenter", key="cash_deliver_btn", use_container_width=is_mobile_client()):
+                ok, msg = mark_cash_delivered_to_gym(data, da_consegnare[i].get("id"))
                 if ok:
                     save_data(data, sha, "Mark cash delivered to gym")
                     st.success(msg); st.rerun()
-                else: st.error(msg)
+                else:
+                    st.error(msg)
         else:
-            st.info("Nessun incasso da consegnare a BodyCenter.")
-        st.markdown("**3. Quota istruttrice ricevuta**")
-        if todo3:
-            i = st.selectbox("Scegli quota ricevuta", range(len(todo3)), format_func=lambda k: _pay_label(todo3[k]) + f" · quota € {money(todo3[k].get('amount',0))*instructor_share():.2f}", key="share_received_select")
-            if st.button("Segna quota 40% ricevuta", key="share_received_btn", use_container_width=is_mobile_client()):
-                ok, msg = mark_share_received(data, todo3[i].get("id"))
+            st.success("Nessun incasso da consegnare.")
+    with tab3:
+        if consegnato:
+            st.metric("Totale quota 40% da pagare/ricevere", f"€ {quota_da_pagare:.2f}")
+            st.dataframe(_cash_df(consegnato), use_container_width=True, hide_index=True)
+            i = st.selectbox("Seleziona quota 40% pagata/ricevuta", range(len(consegnato)), format_func=lambda k: _pay_label(consegnato[k]) + f" · quota € {money(consegnato[k].get('amount',0))*instructor_share():.2f}", key="share_received_select")
+            if st.button("Segna quota 40% pagata/ricevuta", key="share_received_btn", use_container_width=is_mobile_client()):
+                ok, msg = mark_share_received(data, consegnato[i].get("id"))
                 if ok:
                     save_data(data, sha, "Mark instructor share received")
                     st.success(msg); st.rerun()
-                else: st.error(msg)
+                else:
+                    st.error(msg)
         else:
-            st.info("Nessuna quota da segnare come ricevuta.")
+            st.info("Nessuna quota da pagare/ricevere: prima l'incasso deve essere consegnato a BodyCenter.")
+    with tab4:
+        if gift_rows:
+            st.dataframe(_cash_df(gift_rows), use_container_width=True, hide_index=True)
+        else:
+            st.info("Nessuna seduta omaggio registrata.")
 
 
-def settlement_bookings(data, instructor=None, paid=None):
-    rows = []
-    for b in data.get("bookings", []):
-        if b.get("status") == "Annullata" or b.get("settlement_id"):
-            continue
-        if instructor and b.get("instructor") != instructor:
-            continue
-        if paid is not None and to_bool(b.get("paid", False)) != paid:
-            continue
-        rows.append(b)
-    return rows
+def render_payment_tracking_box(data, sha):
+    with st.expander("Gestione incassi", expanded=True):
+        render_cash_workflow(data, sha, compact=True)
 
 
 def render_settlements(data, sha):
     st.subheader("Incassi e liquidazioni")
-    rows = [b for b in data.get("bookings", []) if b.get("status") != "Annullata"]
-    if is_admin():
-        open_rows = [b for b in rows if not b.get("settlement_id")]
-        collected = sum(money(b.get("amount",0)) for b in open_rows if to_bool(b.get("paid",False)))
-        to_deliver = sum(money(b.get("amount",0)) for b in open_rows if to_bool(b.get("paid",False)) and not b.get("gym_delivered_at"))
-        delivered = sum(money(b.get("amount",0)) for b in open_rows if to_bool(b.get("paid",False)) and b.get("gym_delivered_at"))
-        due = delivered * instructor_share()
-        a,b,c,d = st.columns(4)
-        a.metric("Incassato da Alice/Grazia", f"€ {collected:.2f}")
-        b.metric("Da consegnare a BodyCenter", f"€ {to_deliver:.2f}")
-        c.metric("Consegnato a BodyCenter", f"€ {delivered:.2f}")
-        d.metric("Da dare alle istruttrici", f"€ {due:.2f}")
-        table=[]
-        for instr in INSTRUCTORS:
-            r=[x for x in open_rows if x.get("instructor")==instr]
-            ci=sum(money(x.get("amount",0)) for x in r if to_bool(x.get("paid",False)))
-            cd=sum(money(x.get("amount",0)) for x in r if to_bool(x.get("paid",False)) and not x.get("gym_delivered_at"))
-            co=sum(money(x.get("amount",0)) for x in r if to_bool(x.get("paid",False)) and x.get("gym_delivered_at"))
-            table.append({"Istruttrice": instr, "Totale incassato": ci, "Da consegnare a BodyCenter": cd, "Consegnato a BodyCenter": co, "Quota da dare 40%": co*instructor_share(), "Quota già data": settled_share_total(data,instr), "Quota BodyCenter 60%": co*gym_share()})
-        st.dataframe(pd.DataFrame(table), use_container_width=True, hide_index=True)
-        render_payment_tracking_box(data, sha)
-        return
-    instr = instructor_name_from_user()
-    my=[b for b in rows if b.get("instructor")==instr and not b.get("settlement_id")]
-    collected=sum(money(b.get("amount",0)) for b in my if to_bool(b.get("paid",False)))
-    todel=sum(money(b.get("amount",0)) for b in my if to_bool(b.get("paid",False)) and not b.get("gym_delivered_at"))
-    delivered=sum(money(b.get("amount",0)) for b in my if to_bool(b.get("paid",False)) and b.get("gym_delivered_at"))
-    a,b,c,d=st.columns(4)
-    a.metric("Incassato da te", f"€ {collected:.2f}")
-    b.metric("Da consegnare a palestra", f"€ {todel:.2f}")
-    c.metric("Consegnato a palestra", f"€ {delivered:.2f}")
-    d.metric("Da ricevere 40%", f"€ {delivered*instructor_share():.2f}")
-    st.caption(f"Quota già ricevuta: € {settled_share_total(data,instr):.2f}")
-    if my:
-        df = pd.DataFrame([{"Data": date_it(x.get("date")), "Ora": x.get("time",""), "Cliente": x.get("name",""), "Incassato": "Sì" if to_bool(x.get("paid",False)) else "No", "Consegnato palestra": "Sì" if x.get("gym_delivered_at") else "No", "Quota 40%": round(money(x.get("amount",0))*instructor_share(),2), "Stato": "Da ricevere" if to_bool(x.get("paid",False)) and x.get("gym_delivered_at") else ("Da consegnare" if to_bool(x.get("paid",False)) else "Da incassare")} for x in my])
-        st.dataframe(df, use_container_width=True, hide_index=True)
-    render_payment_tracking_box(data, sha)
+    render_cash_workflow(data, sha)
+    instr = None if is_admin() else instructor_name_from_user()
+    already = settled_share_total(data, instr)
+    st.markdown("### Storico quote 40% già pagate/ricevute")
+    hist = []
+    for x in data.get("settlements", []):
+        if instr and x.get("instructor") != instr:
+            continue
+        hist.append({"Data": x.get("created_at", ""), "Istruttrice": x.get("instructor", ""), "Quota 40%": money(x.get("instructor_amount", 0)), "Quota BodyCenter 60%": money(x.get("gym_amount", 0)), "Lezioni": int(x.get("lessons", 0) or 0)})
+    st.metric("Totale quota già pagata/ricevuta", f"€ {already:.2f}")
+    if hist:
+        st.dataframe(pd.DataFrame(hist), use_container_width=True, hide_index=True)
+    else:
+        st.info("Nessuna quota già chiusa.")
 
 
 def cancel_booking(data, booking_id, note=""):
@@ -398,7 +425,7 @@ def _h(x):
 
 
 def _planning_table(rows):
-    return pd.DataFrame([{"Quando": f"{date_label_it(b.get('date'))} · {b.get('time','')}", "Istruttrice": b.get("instructor",""), "Cliente": b.get("name",""), "Telefono": b.get("phone",""), "Incassato": "Sì" if to_bool(b.get("paid",False)) else "No", "Consegnato palestra": "Sì" if b.get("gym_delivered_at") else "No"} for b in rows])
+    return pd.DataFrame([{"Quando": f"{date_label_it(b.get('date'))} · {b.get('time','')}", "Istruttrice": b.get("instructor",""), "Cliente": b.get("name",""), "Telefono": b.get("phone",""), "Tipo": "Omaggio" if is_gift_booking(b) else "Pagamento", "Incassato": "Sì" if to_bool(b.get("paid",False)) and not is_gift_booking(b) else ("Omaggio" if is_gift_booking(b) else "No"), "Consegnato palestra": "Sì" if b.get("gym_delivered_at") else "No"} for b in rows])
 
 
 def _render_planning_view(data, rows, title, days=14, show_instructor=True):
@@ -406,14 +433,14 @@ def _render_planning_view(data, rows, title, days=14, show_instructor=True):
     today=date.today(); all_days=[(today+timedelta(days=i)).isoformat() for i in range(days)]
     by={d:[] for d in all_days}
     for r in rows: by.setdefault(r.get("date",""),[]).append(r)
-    a,b,c=st.columns(3); a.metric("Oggi", len([x for x in rows if x.get("date")==today.isoformat()])); b.metric(f"Prossimi {days} giorni", len(rows)); c.metric("Lista attesa", len([x for x in rows if x.get("status")=="Lista attesa"]))
+    a,b,c=st.columns(3); a.metric("Oggi", len([x for x in rows if x.get("date")==today.isoformat()])); b.metric(f"Prossimi {days} giorni", len(rows)); c.metric("Omaggio", len([x for x in rows if is_gift_booking(x)]))
     cards=[]
     for d in all_days:
         slot={}
         for r in by.get(d,[]): slot.setdefault((r.get("time",""),r.get("instructor","")),[]).append(r)
         lines=[]
         for (t,instr),group in sorted(slot.items(),key=lambda x:(x[0][0],x[0][1])):
-            conf=[x for x in group if x.get("status")=="Confermata"]; wait=[x for x in group if x.get("status")=="Lista attesa"]; names=", ".join([x.get("name","") for x in conf]) or "—"; instr_txt=f" <span>{_h(instr)}</span>" if show_instructor and instr else ""
+            conf=[x for x in group if x.get("status")=="Confermata"]; wait=[x for x in group if x.get("status")=="Lista attesa"]; names=", ".join([x.get("name","") + (" (omaggio)" if is_gift_booking(x) else "") for x in conf]) or "—"; instr_txt=f" <span>{_h(instr)}</span>" if show_instructor and instr else ""
             lines.append(f"<div class='slot'><b>{_h(t)}</b>{instr_txt} <em>{len(conf)}/{CAPACITY} · lib {max(CAPACITY-len(conf),0)}"+(f" · att {len(wait)}" if wait else "")+f"</em><br><small>{_h(names)}</small></div>")
         cards.append(f"<div class='day-card{' empty' if not lines else ''}'><div class='day-title'>{_h(date_label_it(d))}</div>{''.join(lines) if lines else '<div class=empty-text>—</div>'}</div>")
     css="<style>.plan-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:7px}.day-card{border:1px solid #d9dde3;border-radius:10px;padding:8px 10px;background:#fff;min-height:76px}.day-card.empty{background:#fafafa;color:#9aa0a6}.day-title{font-weight:700;font-size:.92rem;margin-bottom:5px}.slot{font-size:.84rem;line-height:1.18;margin:3px 0 5px;padding-bottom:4px;border-bottom:1px solid #eef0f2}.slot:last-child{border-bottom:0}.slot em{font-style:normal;color:#707782;font-size:.78rem}.slot small{font-size:.78rem}</style>"
@@ -423,7 +450,6 @@ def _render_planning_view(data, rows, title, days=14, show_instructor=True):
 
 
 def personal_planning_pdf_bytes(data, instr, days=14):
-    # PDF essenziale, stabile
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.styles import getSampleStyleSheet
@@ -432,9 +458,9 @@ def personal_planning_pdf_bytes(data, instr, days=14):
     buf=BytesIO(); rows=_planning_base_rows(data,days,instr); doc=SimpleDocTemplate(buf,pagesize=landscape(A4),leftMargin=.8*cm,rightMargin=.8*cm,topMargin=.7*cm,bottomMargin=.7*cm); styles=getSampleStyleSheet(); elems=[]
     if Path(LOGO_PATH).exists(): elems.append(Image(LOGO_PATH,width=2.5*cm,height=1.2*cm,kind="proportional"))
     elems += [Paragraph(f"Planning personale - {instr}", styles["Title"]), Spacer(1,.2*cm)]
-    data_tbl=[["Data","Ora","Cliente","Telefono","Incassato","Consegnato","Quota 40%"]]
+    data_tbl=[["Data","Ora","Cliente","Telefono","Tipo","Incassato","Consegnato","Quota 40%"]]
     for b in rows:
-        am=money(b.get("amount",0)); data_tbl.append([date_label_it(b.get("date")), b.get("time",""), b.get("name",""), b.get("phone",""), "Sì" if to_bool(b.get("paid",False)) else "No", "Sì" if b.get("gym_delivered_at") else "No", f"€ {am*instructor_share():.2f}"])
+        am=money(b.get("amount",0)); data_tbl.append([date_label_it(b.get("date")), b.get("time",""), b.get("name",""), b.get("phone",""), "Omaggio" if is_gift_booking(b) else "Pagamento", "Sì" if to_bool(b.get("paid",False)) and not is_gift_booking(b) else ("Omaggio" if is_gift_booking(b) else "No"), "Sì" if b.get("gym_delivered_at") else "No", f"€ {am*instructor_share():.2f}" if not is_gift_booking(b) else "€ 0.00"])
     tab=Table(data_tbl, repeatRows=1); tab.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor(DARK)),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),.25,colors.lightgrey),("FONTSIZE",(0,0),(-1,-1),8)])); elems.append(tab); doc.build(elems); return buf.getvalue()
 
 
