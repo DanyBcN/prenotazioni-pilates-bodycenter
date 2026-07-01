@@ -2,11 +2,11 @@ from pathlib import Path
 import re
 
 
-def _rf(src, name, replacement):
-    m = re.search(rf"(^|\n)def {name}\([^\n]*\):\n.*?(?=\n\ndef |\n\n# -----------------------------|\Z)", src, flags=re.S)
+def _rf(src, name, repl):
+    m = re.search(rf"(^|\n)def {name}\([^\n]*\):\n.*?(?=\n\ndef |\n\n# -----------------------------|\Z)", src, re.S)
     if not m:
         return src
-    return src[:m.start()] + ("\n" if m.group(1) else "") + replacement.rstrip() + src[m.end():]
+    return src[:m.start()] + ("\n" if m.group(1) else "") + repl.rstrip() + src[m.end():]
 
 
 def _patch_app():
@@ -83,6 +83,7 @@ def visible_sections():
     s = s.replace('''        b.setdefault("status", "Confermata")
         b.setdefault("date", date.today().isoformat())''', '''        b.setdefault("status", "Confermata")
         b.setdefault("settlement_id", "")
+        b.setdefault("gym_delivered_at", "")
         b.setdefault("date", date.today().isoformat())''', 1)
 
     s = _rf(s, "login", '''def login():
@@ -105,7 +106,6 @@ def visible_sections():
                 st.error("Utente o password non corretti")
     return False''')
 
-    # Le capienze devono essere per istruttrice: Grazia e Alice possono avere lo stesso orario senza sovrapporsi.
     s = _rf(s, "slot_rows", '''def slot_rows(data, d, t, include_cancelled=False, instructor=None):
     rows = []
     for b in data.get("bookings", []):
@@ -117,43 +117,15 @@ def visible_sections():
             continue
         rows.append(b)
     return sorted(rows, key=lambda x: x.get("created_at", ""))''')
-
     s = _rf(s, "confirmed_count", '''def confirmed_count(data, d, t, exclude_id=None, instructor=None):
     return sum(1 for b in slot_rows(data, d, t, instructor=instructor) if b.get("status") == "Confermata" and b.get("id") != exclude_id)''')
-
     s = _rf(s, "auto_status", '''def auto_status(data, d, t, instructor=None):
     return "Confermata" if confirmed_count(data, d, t, instructor=instructor) < CAPACITY else "Lista attesa"''')
-
     s = _rf(s, "slot_status", '''def slot_status(data, d, t, instructor=None):
     rows = slot_rows(data, d, t, instructor=instructor)
     conf = [b for b in rows if b.get("status") == "Confermata"]
     wait = [b for b in rows if b.get("status") == "Lista attesa"]
     return len(conf), len(wait), conf, wait''')
-
-    s = _rf(s, "create_booking", '''def create_booking(data, cid, d, t, amount, paid, instructor, note):
-    c = get_client(data, cid)
-    if not c:
-        raise ValueError("Cliente non trovato.")
-    b = {
-        "id": new_id("b_"),
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-        "client_id": cid,
-        "date": date_key(d),
-        "day": DAY_NAMES[d.weekday()],
-        "time": t,
-        "name": full_name(c),
-        "phone": c.get("phone", ""),
-        "email": c.get("email", ""),
-        "note": note.strip(),
-        "status": auto_status(data, d, t, instructor),
-        "amount": money(amount),
-        "paid": bool(paid),
-        "instructor": instructor,
-        "created_by": current_user(),
-    }
-    data["bookings"].append(b)
-    return b''')
-
     s = _rf(s, "change_status", '''def change_status(data, bid, status):
     for b in data.get("bookings", []):
         if b.get("id") == bid:
@@ -165,7 +137,13 @@ def visible_sections():
             b["status"] = status
             return True
     return False''')
-
+    s = _rf(s, "create_booking", '''def create_booking(data, cid, d, t, amount, paid, instructor, note):
+    c = get_client(data, cid)
+    if not c:
+        raise ValueError("Cliente non trovato.")
+    b = {"id": new_id("b_"), "created_at": datetime.now().isoformat(timespec="seconds"), "client_id": cid, "date": date_key(d), "day": DAY_NAMES[d.weekday()], "time": t, "name": full_name(c), "phone": c.get("phone", ""), "email": c.get("email", ""), "note": note.strip(), "status": auto_status(data, d, t, instructor), "amount": money(amount), "paid": bool(paid), "paid_to_gym_at": datetime.now().isoformat(timespec="seconds") if paid else "", "paid_to_gym_by": current_user() if paid else "", "gym_delivered_at": "", "gym_delivered_by": "", "settlement_id": "", "instructor": instructor, "created_by": current_user()}
+    data["bookings"].append(b)
+    return b''')
     s = _rf(s, "render_booking", '''def render_booking(data, sha):
     st.subheader("Prenota")
     mode = st.radio("Cliente", ["Seleziona da archivio", "Nuovo cliente"], horizontal=True)
@@ -193,7 +171,6 @@ def visible_sections():
                 save_and_rerun(data, sha, "Add client")
             else:
                 st.error(msg)
-
     if cid:
         st.markdown("### Dati prenotazione")
         a, b = st.columns(2)
@@ -207,7 +184,7 @@ def visible_sections():
         default_index = INSTRUCTORS.index(default_instr) if default_instr in INSTRUCTORS else 0
         a, b, c = st.columns(3)
         amount = a.number_input("Importo (€)", min_value=0.0, value=0.0, step=1.0, format="%.2f")
-        paid = b.checkbox("Pagato")
+        paid = b.checkbox("Incassato dal cliente")
         instr = c.selectbox("Istruttrice", INSTRUCTORS, index=default_index)
         note = st.text_area("Note prenotazione")
         n = confirmed_count(data, d, t, instructor=instr)
@@ -217,9 +194,103 @@ def visible_sections():
             st.session_state["_next_section"] = "Planning"
             save_and_rerun(data, sha, f"Add booking {bk['name']}")''')
 
-    module = '''
+    module = r'''
+def mark_client_collected(data, booking_id):
+    for b in data.get("bookings", []):
+        if b.get("id") == booking_id:
+            if b.get("status") == "Annullata":
+                return False, "Prenotazione annullata."
+            b["paid"] = True
+            b["paid_to_gym_at"] = datetime.now().isoformat(timespec="seconds")
+            b["paid_to_gym_by"] = current_user()
+            return True, "Incasso cliente segnato."
+    return False, "Prenotazione non trovata."
+
+
+def mark_cash_delivered_to_gym(data, booking_id):
+    for b in data.get("bookings", []):
+        if b.get("id") == booking_id:
+            if not to_bool(b.get("paid", False)):
+                return False, "Prima segna l'incasso cliente."
+            b["gym_delivered_at"] = datetime.now().isoformat(timespec="seconds")
+            b["gym_delivered_by"] = current_user()
+            return True, "Incasso consegnato a BodyCenter segnato."
+    return False, "Prenotazione non trovata."
+
+
+def mark_share_received(data, booking_id):
+    for b in data.get("bookings", []):
+        if b.get("id") == booking_id:
+            if not to_bool(b.get("paid", False)):
+                return False, "Prima segna l'incasso cliente."
+            if not b.get("gym_delivered_at"):
+                return False, "Prima segna la consegna dell'incasso a BodyCenter."
+            if b.get("settlement_id"):
+                return False, "Quota già ricevuta."
+            sid = new_id("sett_")
+            amount = money(b.get("amount", 0))
+            b["settlement_id"] = sid
+            b["share_paid_at"] = datetime.now().isoformat(timespec="seconds")
+            b["share_paid_by"] = current_user()
+            data.setdefault("settlements", []).append({"id": sid, "created_at": b["share_paid_at"], "instructor": b.get("instructor", ""), "gross_amount": round(amount, 2), "instructor_amount": round(amount*instructor_share(), 2), "gym_amount": round(amount*gym_share(), 2), "lessons": 1, "closed_by": current_user(), "booking_id": booking_id})
+            return True, "Quota istruttrice ricevuta segnata."
+    return False, "Prenotazione non trovata."
+
+
+def settled_share_total(data, instructor=None):
+    return sum(money(x.get("instructor_amount", 0)) for x in data.get("settlements", []) if not instructor or x.get("instructor") == instructor)
+
+
+def _pay_label(b):
+    return f"{date_it(b.get('date'))} · {b.get('time','')} · {b.get('instructor','')} · {b.get('name','')}"
+
+
+def render_payment_tracking_box(data, sha):
+    with st.expander("Incassi / consegna palestra / quota istruttrice", expanded=True):
+        st.caption("Qui Grazia/Alice segnano: incasso dal cliente, consegna dell'incasso a BodyCenter e quota 40% ricevuta.")
+        instr_user = instructor_name_from_user()
+        open_rows = [b for b in data.get("bookings", []) if b.get("status") != "Annullata" and not b.get("settlement_id")]
+        rows = open_rows if is_admin() else [b for b in open_rows if b.get("instructor") == instr_user]
+        todo1 = sorted([b for b in rows if not to_bool(b.get("paid", False))], key=lambda x:(str(x.get("date","")),str(x.get("time","")),str(x.get("name",""))))
+        todo2 = sorted([b for b in rows if to_bool(b.get("paid", False)) and not b.get("gym_delivered_at")], key=lambda x:(str(x.get("date","")),str(x.get("time","")),str(x.get("name",""))))
+        todo3 = sorted([b for b in rows if to_bool(b.get("paid", False)) and b.get("gym_delivered_at")], key=lambda x:(str(x.get("date","")),str(x.get("time","")),str(x.get("name",""))))
+        st.markdown("**1. Incasso ricevuto dal cliente**")
+        if todo1:
+            i = st.selectbox("Scegli prenotazione da segnare come incassata", range(len(todo1)), format_func=lambda k: _pay_label(todo1[k]), key="cash_client_select")
+            if st.button("Segna incasso cliente", key="cash_client_btn", use_container_width=is_mobile_client()):
+                ok, msg = mark_client_collected(data, todo1[i].get("id"))
+                if ok:
+                    save_data(data, sha, "Mark client cash collected")
+                    st.success(msg); st.rerun()
+                else: st.error(msg)
+        else:
+            st.info("Nessun incasso cliente da segnare.")
+        st.markdown("**2. Incasso consegnato a BodyCenter**")
+        if todo2:
+            i = st.selectbox("Scegli incasso consegnato a BodyCenter", range(len(todo2)), format_func=lambda k: _pay_label(todo2[k]) + f" · € {money(todo2[k].get('amount',0)):.2f}", key="cash_deliver_select")
+            if st.button("Segna incasso consegnato a BodyCenter", key="cash_deliver_btn", use_container_width=is_mobile_client()):
+                ok, msg = mark_cash_delivered_to_gym(data, todo2[i].get("id"))
+                if ok:
+                    save_data(data, sha, "Mark cash delivered to gym")
+                    st.success(msg); st.rerun()
+                else: st.error(msg)
+        else:
+            st.info("Nessun incasso da consegnare a BodyCenter.")
+        st.markdown("**3. Quota istruttrice ricevuta**")
+        if todo3:
+            i = st.selectbox("Scegli quota ricevuta", range(len(todo3)), format_func=lambda k: _pay_label(todo3[k]) + f" · quota € {money(todo3[k].get('amount',0))*instructor_share():.2f}", key="share_received_select")
+            if st.button("Segna quota 40% ricevuta", key="share_received_btn", use_container_width=is_mobile_client()):
+                ok, msg = mark_share_received(data, todo3[i].get("id"))
+                if ok:
+                    save_data(data, sha, "Mark instructor share received")
+                    st.success(msg); st.rerun()
+                else: st.error(msg)
+        else:
+            st.info("Nessuna quota da segnare come ricevuta.")
+
+
 def settlement_bookings(data, instructor=None, paid=None):
-    out = []
+    rows = []
     for b in data.get("bookings", []):
         if b.get("status") == "Annullata" or b.get("settlement_id"):
             continue
@@ -227,29 +298,49 @@ def settlement_bookings(data, instructor=None, paid=None):
             continue
         if paid is not None and to_bool(b.get("paid", False)) != paid:
             continue
-        out.append(b)
-    return out
+        rows.append(b)
+    return rows
 
 
-def settlement_summary(data, instructor=None):
-    rows = settlement_bookings(data, instructor)
-    paid = [b for b in rows if to_bool(b.get("paid", False))]
-    total = sum(money(b.get("amount", 0)) for b in rows)
-    paid_total = sum(money(b.get("amount", 0)) for b in paid)
-    return {"rows": rows, "paid": paid, "total": total, "paid_total": paid_total,
-            "inst_total": total * instructor_share(), "inst_paid": paid_total * instructor_share(),
-            "gym_total": total * gym_share(), "gym_paid": paid_total * gym_share()}
-
-
-def close_instructor_settlement(data, instructor):
-    sm = settlement_summary(data, instructor)
-    if not sm["paid"]:
-        return False, "Nessun importo incassato da liquidare."
-    sid = new_id("sett_")
-    data.setdefault("settlements", []).append({"id": sid, "created_at": datetime.now().isoformat(timespec="seconds"), "instructor": instructor, "gross_amount": round(sm["paid_total"], 2), "instructor_amount": round(sm["inst_paid"], 2), "gym_amount": round(sm["gym_paid"], 2), "lessons": len(sm["paid"]), "closed_by": current_user()})
-    for b in sm["paid"]:
-        b["settlement_id"] = sid
-    return True, f"Liquidazione chiusa per {instructor}: € {sm['inst_paid']:.2f}."
+def render_settlements(data, sha):
+    st.subheader("Incassi e liquidazioni")
+    rows = [b for b in data.get("bookings", []) if b.get("status") != "Annullata"]
+    if is_admin():
+        open_rows = [b for b in rows if not b.get("settlement_id")]
+        collected = sum(money(b.get("amount",0)) for b in open_rows if to_bool(b.get("paid",False)))
+        to_deliver = sum(money(b.get("amount",0)) for b in open_rows if to_bool(b.get("paid",False)) and not b.get("gym_delivered_at"))
+        delivered = sum(money(b.get("amount",0)) for b in open_rows if to_bool(b.get("paid",False)) and b.get("gym_delivered_at"))
+        due = delivered * instructor_share()
+        a,b,c,d = st.columns(4)
+        a.metric("Incassato da Alice/Grazia", f"€ {collected:.2f}")
+        b.metric("Da consegnare a BodyCenter", f"€ {to_deliver:.2f}")
+        c.metric("Consegnato a BodyCenter", f"€ {delivered:.2f}")
+        d.metric("Da dare alle istruttrici", f"€ {due:.2f}")
+        table=[]
+        for instr in INSTRUCTORS:
+            r=[x for x in open_rows if x.get("instructor")==instr]
+            ci=sum(money(x.get("amount",0)) for x in r if to_bool(x.get("paid",False)))
+            cd=sum(money(x.get("amount",0)) for x in r if to_bool(x.get("paid",False)) and not x.get("gym_delivered_at"))
+            co=sum(money(x.get("amount",0)) for x in r if to_bool(x.get("paid",False)) and x.get("gym_delivered_at"))
+            table.append({"Istruttrice": instr, "Totale incassato": ci, "Da consegnare a BodyCenter": cd, "Consegnato a BodyCenter": co, "Quota da dare 40%": co*instructor_share(), "Quota già data": settled_share_total(data,instr), "Quota BodyCenter 60%": co*gym_share()})
+        st.dataframe(pd.DataFrame(table), use_container_width=True, hide_index=True)
+        render_payment_tracking_box(data, sha)
+        return
+    instr = instructor_name_from_user()
+    my=[b for b in rows if b.get("instructor")==instr and not b.get("settlement_id")]
+    collected=sum(money(b.get("amount",0)) for b in my if to_bool(b.get("paid",False)))
+    todel=sum(money(b.get("amount",0)) for b in my if to_bool(b.get("paid",False)) and not b.get("gym_delivered_at"))
+    delivered=sum(money(b.get("amount",0)) for b in my if to_bool(b.get("paid",False)) and b.get("gym_delivered_at"))
+    a,b,c,d=st.columns(4)
+    a.metric("Incassato da te", f"€ {collected:.2f}")
+    b.metric("Da consegnare a palestra", f"€ {todel:.2f}")
+    c.metric("Consegnato a palestra", f"€ {delivered:.2f}")
+    d.metric("Da ricevere 40%", f"€ {delivered*instructor_share():.2f}")
+    st.caption(f"Quota già ricevuta: € {settled_share_total(data,instr):.2f}")
+    if my:
+        df = pd.DataFrame([{"Data": date_it(x.get("date")), "Ora": x.get("time",""), "Cliente": x.get("name",""), "Incassato": "Sì" if to_bool(x.get("paid",False)) else "No", "Consegnato palestra": "Sì" if x.get("gym_delivered_at") else "No", "Quota 40%": round(money(x.get("amount",0))*instructor_share(),2), "Stato": "Da ricevere" if to_bool(x.get("paid",False)) and x.get("gym_delivered_at") else ("Da consegnare" if to_bool(x.get("paid",False)) else "Da incassare")} for x in my])
+        st.dataframe(df, use_container_width=True, hide_index=True)
+    render_payment_tracking_box(data, sha)
 
 
 def cancel_booking(data, booking_id, note=""):
@@ -267,213 +358,103 @@ def cancel_booking(data, booking_id, note=""):
 
 
 def render_cancel_booking_box(data, sha):
-    rows = []
-    for b in data.get("bookings", []):
+    rows=[]
+    for b in data.get("bookings",[]):
         if b.get("status") == "Annullata" or b.get("settlement_id"):
             continue
         try:
-            if parse_date(b.get("date")) >= date.today():
-                rows.append(b)
-        except Exception:
-            pass
-    rows = sorted(rows, key=lambda x: (str(x.get("date", "")), str(x.get("time", "")), str(x.get("instructor", "")), str(x.get("name", ""))))
+            if parse_date(b.get("date")) >= date.today(): rows.append(b)
+        except Exception: pass
+    rows=sorted(rows,key=lambda x:(str(x.get("date","")),str(x.get("time","")),str(x.get("instructor","")),str(x.get("name",""))))
     with st.expander("Annulla prenotazione", expanded=False):
         if not rows:
-            st.info("Nessuna prenotazione futura annullabile.")
-            return
-        labels, mp = [], {}
+            st.info("Nessuna prenotazione futura annullabile."); return
+        labels=[]; mp={}
         for b in rows:
-            lab = f"{date_it(b.get('date'))} · {b.get('time','')} · {b.get('instructor','')} · {b.get('name','')}"
-            labels.append(lab)
-            mp[lab] = b.get("id")
-        choice = st.selectbox("Prenotazione", labels, key="cancel_booking_select")
-        note = st.text_input("Motivo / nota opzionale", key="cancel_booking_note")
-        okc = st.checkbox("Confermo l'annullamento", key="cancel_booking_confirm")
+            lab=f"{date_it(b.get('date'))} · {b.get('time','')} · {b.get('instructor','')} · {b.get('name','')}"; labels.append(lab); mp[lab]=b.get("id")
+        choice=st.selectbox("Prenotazione", labels, key="cancel_booking_select")
+        note=st.text_input("Motivo / nota opzionale", key="cancel_booking_note")
+        okc=st.checkbox("Confermo l'annullamento", key="cancel_booking_confirm")
         if st.button("Annulla prenotazione selezionata", key="cancel_booking_button", type="secondary", use_container_width=is_mobile_client()):
-            if not okc:
-                st.warning("Spunta la conferma prima di annullare.")
-                return
-            ok, msg = cancel_booking(data, mp[choice], note)
-            if ok:
-                save_data(data, sha, "Cancel booking")
-                st.success(msg)
-                st.rerun()
-            else:
-                st.error(msg)
-
-
-def render_settlements(data, sha):
-    st.subheader("Incassi e liquidazioni")
-    if is_admin():
-        sums = {i: settlement_summary(data, i) for i in INSTRUCTORS}
-        a, b = st.columns(2)
-        a.metric("Totale incassi complessivi", f"€ {sum(x['total'] for x in sums.values()):.2f}")
-        b.metric("Totale BodyCenter 60%", f"€ {sum(x['gym_total'] for x in sums.values()):.2f}")
-        cols = st.columns(4)
-        for n, i in enumerate(INSTRUCTORS):
-            cols[n*2].metric(f"Totale {i}", f"€ {sums[i]['total']:.2f}")
-            cols[n*2+1].metric(f"Guadagno {i} 40%", f"€ {sums[i]['inst_total']:.2f}")
-        for i in INSTRUCTORS:
-            sm = sums[i]
-            with st.container(border=True):
-                st.markdown(f"### {i}")
-                c1, c2, c3 = st.columns(3)
-                c1.metric(f"Guadagno {i} 40%", f"€ {sm['inst_total']:.2f}")
-                c2.metric("Da liquidare ora", f"€ {sm['inst_paid']:.2f}")
-                c3.metric("Quota BodyCenter 60%", f"€ {sm['gym_total']:.2f}")
-                if st.button(f"Liquida e azzera pagato {i}", key=f"settle_{i}", type="primary", use_container_width=is_mobile_client()):
-                    ok, msg = close_instructor_settlement(data, i)
-                    if ok:
-                        save_data(data, sha, f"Close settlement {i}")
-                        st.success(msg)
-                        st.rerun()
-                    else:
-                        st.info(msg)
-        return
-    instr = instructor_name_from_user()
-    sm = settlement_summary(data, instr)
-    a, b, c = st.columns(3)
-    a.metric("Mio guadagno 40%", f"€ {sm['inst_total']:.2f}")
-    b.metric("Quota palestra 60%", f"€ {sm['gym_total']:.2f}")
-    c.metric("Da liquidare ora", f"€ {sm['inst_paid']:.2f}")
-    st.caption(f"Lezioni mie: {len(sm['rows'])} · pagate: {len(sm['paid'])} · non pagate: {len(sm['rows'])-len(sm['paid'])}")
-    if sm["rows"]:
-        df = pd.DataFrame([{"Data": date_it(x.get("date")), "Ora": x.get("time", ""), "Cliente": x.get("name", ""), "Pagato": "Sì" if to_bool(x.get("paid", False)) else "No", "Quota 40%": round(money(x.get("amount", 0))*instructor_share(), 2), "Quota palestra 60%": round(money(x.get("amount", 0))*gym_share(), 2)} for x in sm["rows"]])
-        st.dataframe(df, use_container_width=True, hide_index=True)
+            if not okc: st.warning("Spunta la conferma prima di annullare."); return
+            ok,msg=cancel_booking(data,mp[choice],note)
+            if ok: save_data(data,sha,"Cancel booking"); st.success(msg); st.rerun()
+            else: st.error(msg)
 
 
 def _planning_base_rows(data, days, instructor=None):
-    today = date.today()
-    end = today + timedelta(days=days-1)
-    out = []
-    for b in data.get("bookings", []):
-        if b.get("status") == "Annullata":
-            continue
-        if instructor and b.get("instructor") != instructor:
-            continue
-        try:
-            d = parse_date(b.get("date"))
-        except Exception:
-            continue
-        if today <= d <= end:
-            out.append(b)
-    return sorted(out, key=lambda x: (str(x.get("date", "")), str(x.get("time", "")), str(x.get("instructor", "")), str(x.get("name", ""))))
+    today=date.today(); end=today+timedelta(days=days-1); out=[]
+    for b in data.get("bookings",[]):
+        if b.get("status")=="Annullata": continue
+        if instructor and b.get("instructor")!=instructor: continue
+        try: d=parse_date(b.get("date"))
+        except Exception: continue
+        if today <= d <= end: out.append(b)
+    return sorted(out,key=lambda x:(str(x.get("date","")),str(x.get("time","")),str(x.get("instructor","")),str(x.get("name",""))))
 
 
 def _h(x):
-    return str(x or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return str(x or "").replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
 
 
 def _planning_table(rows):
-    return pd.DataFrame([{"Quando": f"{date_label_it(b.get('date'))} · {b.get('time','')}", "Istruttrice": b.get("instructor", ""), "Cliente": b.get("name", ""), "Telefono": b.get("phone", ""), "Stato": b.get("status", ""), "Pagato": "Sì" if to_bool(b.get("paid", False)) else "No"} for b in rows])
+    return pd.DataFrame([{"Quando": f"{date_label_it(b.get('date'))} · {b.get('time','')}", "Istruttrice": b.get("instructor",""), "Cliente": b.get("name",""), "Telefono": b.get("phone",""), "Incassato": "Sì" if to_bool(b.get("paid",False)) else "No", "Consegnato palestra": "Sì" if b.get("gym_delivered_at") else "No"} for b in rows])
 
 
 def _render_planning_view(data, rows, title, days=14, show_instructor=True):
     st.markdown(f"### {title}")
-    today = date.today()
-    all_days = [(today + timedelta(days=i)).isoformat() for i in range(days)]
-    by_day = {d: [] for d in all_days}
-    for r in rows:
-        by_day.setdefault(r.get("date", ""), []).append(r)
-    a, b, c = st.columns(3)
-    a.metric("Oggi", len([x for x in rows if x.get("date") == today.isoformat()]))
-    b.metric(f"Prossimi {days} giorni", len(rows))
-    c.metric("Lista attesa", len([x for x in rows if x.get("status") == "Lista attesa"]))
-    cards = []
+    today=date.today(); all_days=[(today+timedelta(days=i)).isoformat() for i in range(days)]
+    by={d:[] for d in all_days}
+    for r in rows: by.setdefault(r.get("date",""),[]).append(r)
+    a,b,c=st.columns(3); a.metric("Oggi", len([x for x in rows if x.get("date")==today.isoformat()])); b.metric(f"Prossimi {days} giorni", len(rows)); c.metric("Lista attesa", len([x for x in rows if x.get("status")=="Lista attesa"]))
+    cards=[]
     for d in all_days:
-        slot = {}
-        for r in by_day.get(d, []):
-            slot.setdefault((r.get("time", ""), r.get("instructor", "")), []).append(r)
-        lines = []
-        for (t, instr), group in sorted(slot.items(), key=lambda x: (x[0][0], x[0][1])):
-            conf = [x for x in group if x.get("status") == "Confermata"]
-            wait = [x for x in group if x.get("status") == "Lista attesa"]
-            names = ", ".join([x.get('name','') for x in conf]) or '—'
-            instr_txt = f" <span>{_h(instr)}</span>" if show_instructor and instr else ""
-            lines.append(f"<div class='slot'><b>{_h(t)}</b>{instr_txt} <em>{len(conf)}/{CAPACITY} · lib {max(CAPACITY-len(conf),0)}" + (f" · att {len(wait)}" if wait else "") + f"</em><br><small>{_h(names)}</small></div>")
-        body = "".join(lines) if lines else "<div class='empty-text'>—</div>"
-        cards.append(f"<div class='day-card{' empty' if not lines else ''}'><div class='day-title'>{_h(date_label_it(d))}</div>{body}</div>")
-    css = "<style>.plan-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:7px}.day-card{border:1px solid #d9dde3;border-radius:10px;padding:8px 10px;background:#fff;min-height:76px}.day-card.empty{background:#fafafa;color:#9aa0a6}.day-title{font-weight:700;font-size:.92rem;margin-bottom:5px}.slot{font-size:.84rem;line-height:1.18;margin:3px 0 5px;padding-bottom:4px;border-bottom:1px solid #eef0f2}.slot:last-child{border-bottom:0}.slot em{font-style:normal;color:#707782;font-size:.78rem}.slot small{font-size:.78rem}</style>"
-    st.markdown(css + "<div class='plan-grid'>" + "".join(cards) + "</div>", unsafe_allow_html=True)
+        slot={}
+        for r in by.get(d,[]): slot.setdefault((r.get("time",""),r.get("instructor","")),[]).append(r)
+        lines=[]
+        for (t,instr),group in sorted(slot.items(),key=lambda x:(x[0][0],x[0][1])):
+            conf=[x for x in group if x.get("status")=="Confermata"]; wait=[x for x in group if x.get("status")=="Lista attesa"]; names=", ".join([x.get("name","") for x in conf]) or "—"; instr_txt=f" <span>{_h(instr)}</span>" if show_instructor and instr else ""
+            lines.append(f"<div class='slot'><b>{_h(t)}</b>{instr_txt} <em>{len(conf)}/{CAPACITY} · lib {max(CAPACITY-len(conf),0)}"+(f" · att {len(wait)}" if wait else "")+f"</em><br><small>{_h(names)}</small></div>")
+        cards.append(f"<div class='day-card{' empty' if not lines else ''}'><div class='day-title'>{_h(date_label_it(d))}</div>{''.join(lines) if lines else '<div class=empty-text>—</div>'}</div>")
+    css="<style>.plan-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:7px}.day-card{border:1px solid #d9dde3;border-radius:10px;padding:8px 10px;background:#fff;min-height:76px}.day-card.empty{background:#fafafa;color:#9aa0a6}.day-title{font-weight:700;font-size:.92rem;margin-bottom:5px}.slot{font-size:.84rem;line-height:1.18;margin:3px 0 5px;padding-bottom:4px;border-bottom:1px solid #eef0f2}.slot:last-child{border-bottom:0}.slot em{font-style:normal;color:#707782;font-size:.78rem}.slot small{font-size:.78rem}</style>"
+    st.markdown(css+"<div class='plan-grid'>"+"".join(cards)+"</div>", unsafe_allow_html=True)
     if rows:
-        with st.expander("Elenco rapido", expanded=False):
-            st.dataframe(_planning_table(rows), use_container_width=True, hide_index=True)
+        with st.expander("Elenco rapido", expanded=False): st.dataframe(_planning_table(rows), use_container_width=True, hide_index=True)
 
 
 def personal_planning_pdf_bytes(data, instr, days=14):
+    # PDF essenziale, stabile
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4, landscape
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.styles import getSampleStyleSheet
     from reportlab.lib.units import cm
     from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-    buf = BytesIO()
-    rows = _planning_base_rows(data, days, instr)
-    q40 = sum(money(b.get("amount", 0))*instructor_share() for b in rows)
-    q60 = sum(money(b.get("amount", 0))*gym_share() for b in rows)
-    paid40 = sum(money(b.get("amount", 0))*instructor_share() for b in rows if to_bool(b.get("paid", False)))
-    today = date.today()
-    all_days = [(today+timedelta(days=i)).isoformat() for i in range(days)]
-    by = {d: [] for d in all_days}
-    for r in rows:
-        by.setdefault(r.get("date", ""), []).append(r)
-    doc = SimpleDocTemplate(buf, pagesize=landscape(A4), leftMargin=1*cm, rightMargin=1*cm, topMargin=0.8*cm, bottomMargin=0.8*cm)
-    styles = getSampleStyleSheet()
-    title_style = ParagraphStyle("TitleDB", parent=styles["Title"], fontSize=18, leading=22, textColor=colors.HexColor(DARK))
-    small = ParagraphStyle("SmallDB", parent=styles["Normal"], fontSize=7, leading=8)
-    normal = ParagraphStyle("NormalDB", parent=styles["Normal"], fontSize=8, leading=10)
-    story = []
-    logo_cell = ""
-    logo = Path(LOGO_PATH)
-    if logo.exists():
-        logo_cell = Image(str(logo), width=3.2*cm, height=1.3*cm, kind="proportional")
-    header = Table([[logo_cell, Paragraph(f"Planning personale - {instr}", title_style)], ["", Paragraph(f"Periodo: {date_it(all_days[0])} - {date_it(all_days[-1])}", normal)]], colWidths=[4*cm, 22*cm])
-    header.setStyle(TableStyle([("VALIGN", (0,0), (-1,-1), "MIDDLE"), ("BOTTOMPADDING", (0,0), (-1,-1), 5)]))
-    story += [header, Spacer(1, 0.15*cm)]
-    summary = Table([["Mio incasso 40%", "Quota palestra 60%", "Mio già pagato", "Mio da incassare"], [f"€ {q40:.2f}", f"€ {q60:.2f}", f"€ {paid40:.2f}", f"€ {q40-paid40:.2f}"]], colWidths=[6.5*cm]*4)
-    summary.setStyle(TableStyle([("BACKGROUND", (0,0), (-1,0), colors.HexColor(LIGHT_GREEN)), ("TEXTCOLOR", (0,0), (-1,0), colors.HexColor(DARK)), ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"), ("FONTNAME", (0,1), (-1,1), "Helvetica-Bold"), ("FONTSIZE", (0,0), (-1,-1), 10), ("ALIGN", (0,0), (-1,-1), "CENTER"), ("BOX", (0,0), (-1,-1), 0.6, colors.HexColor("#cfd8d3")), ("INNERGRID", (0,0), (-1,-1), 0.3, colors.HexColor("#dfe7e2")), ("PADDING", (0,0), (-1,-1), 7)]))
-    story += [summary, Spacer(1, 0.25*cm)]
-    table_rows = [["Data", "Ora", "Cliente", "Telefono", "Pagato", "Quota 40%", "Palestra 60%", "Note"]]
-    for d in all_days:
-        day_rows = sorted(by.get(d, []), key=lambda x: (str(x.get("time", "")), str(x.get("name", ""))))
-        if not day_rows:
-            table_rows.append([Paragraph(date_label_it(d), small), "-", Paragraph("-", small), "", "", "", "", ""])
-            continue
-        first = True
-        for b in day_rows:
-            am = money(b.get("amount", 0))
-            table_rows.append([Paragraph(date_label_it(d) if first else "", small), Paragraph(str(b.get("time", "")), small), Paragraph(_h(b.get("name", "")), small), Paragraph(_h(b.get("phone", "")), small), "Sì" if to_bool(b.get("paid", False)) else "No", f"€ {am*instructor_share():.2f}", f"€ {am*gym_share():.2f}", Paragraph(_h(b.get("note", "")), small)])
-            first = False
-    tbl = Table(table_rows, repeatRows=1, colWidths=[3.0*cm, 1.6*cm, 4.3*cm, 3.0*cm, 1.6*cm, 2.3*cm, 2.5*cm, 6.5*cm])
-    tbl.setStyle(TableStyle([("BACKGROUND", (0,0), (-1,0), colors.HexColor(DARK)), ("TEXTCOLOR", (0,0), (-1,0), colors.white), ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"), ("FONTSIZE", (0,0), (-1,-1), 7), ("VALIGN", (0,0), (-1,-1), "TOP"), ("GRID", (0,0), (-1,-1), 0.25, colors.HexColor("#d9dde3")), ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, colors.HexColor("#f8faf9")]), ("PADDING", (0,0), (-1,-1), 4)]))
-    story.append(tbl)
-    doc.build(story)
-    return buf.getvalue()
+    buf=BytesIO(); rows=_planning_base_rows(data,days,instr); doc=SimpleDocTemplate(buf,pagesize=landscape(A4),leftMargin=.8*cm,rightMargin=.8*cm,topMargin=.7*cm,bottomMargin=.7*cm); styles=getSampleStyleSheet(); elems=[]
+    if Path(LOGO_PATH).exists(): elems.append(Image(LOGO_PATH,width=2.5*cm,height=1.2*cm,kind="proportional"))
+    elems += [Paragraph(f"Planning personale - {instr}", styles["Title"]), Spacer(1,.2*cm)]
+    data_tbl=[["Data","Ora","Cliente","Telefono","Incassato","Consegnato","Quota 40%"]]
+    for b in rows:
+        am=money(b.get("amount",0)); data_tbl.append([date_label_it(b.get("date")), b.get("time",""), b.get("name",""), b.get("phone",""), "Sì" if to_bool(b.get("paid",False)) else "No", "Sì" if b.get("gym_delivered_at") else "No", f"€ {am*instructor_share():.2f}"])
+    tab=Table(data_tbl, repeatRows=1); tab.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor(DARK)),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),.25,colors.lightgrey),("FONTSIZE",(0,0),(-1,-1),8)])); elems.append(tab); doc.build(elems); return buf.getvalue()
 
 
 def render_personal_planning_download(data, instr, days=14):
-    if instr:
-        st.download_button("Scarica PDF planning personale + incasso", data=personal_planning_pdf_bytes(data, instr, days), file_name=f"planning_{instr.lower()}_14_giorni.pdf", mime="application/pdf", use_container_width=is_mobile_client(), key=f"download_pdf_planning_{instr}")
+    if instr: st.download_button("Scarica PDF planning personale + incasso", data=personal_planning_pdf_bytes(data,instr,days), file_name=f"planning_{instr.lower()}_14_giorni.pdf", mime="application/pdf", use_container_width=is_mobile_client(), key=f"download_pdf_planning_{instr}")
 
 
 def render_planning(data, sha=None):
     st.subheader("Planning 14 giorni")
     render_cancel_booking_box(data, sha)
-    giorni = 14
+    render_payment_tracking_box(data, sha)
+    giorni=14
     if is_admin():
-        vista = st.selectbox("Vista", ["Tutte", *INSTRUCTORS], key="planning_admin_view")
-        instr = None if vista == "Tutte" else vista
-        _render_planning_view(data, _planning_base_rows(data, giorni, instr), f"Planning {vista}", giorni, show_instructor=True)
-        return
-    instr = instructor_name_from_user()
-    render_personal_planning_download(data, instr, giorni)
-    tab_all, tab_miei = st.tabs(["Planning completo", "I miei impegni"])
-    with tab_all:
-        _render_planning_view(data, _planning_base_rows(data, giorni, None), "Planning completo", giorni, show_instructor=True)
-    with tab_miei:
-        _render_planning_view(data, _planning_base_rows(data, giorni, instr), f"Prossimi impegni {instr}", giorni, show_instructor=False)
+        vista=st.selectbox("Vista", ["Tutte", *INSTRUCTORS], key="planning_admin_view"); instr=None if vista=="Tutte" else vista; _render_planning_view(data,_planning_base_rows(data,giorni,instr),f"Planning {vista}",giorni,show_instructor=True); return
+    instr=instructor_name_from_user(); render_personal_planning_download(data,instr,giorni); tab_all,tab_miei=st.tabs(["Planning completo","I miei impegni"])
+    with tab_all: _render_planning_view(data,_planning_base_rows(data,giorni,None),"Planning completo",giorni,show_instructor=True)
+    with tab_miei: _render_planning_view(data,_planning_base_rows(data,giorni,instr),f"Prossimi impegni {instr}",giorni,show_instructor=False)
 '''
     boot = "\n\n# -----------------------------\n# App bootstrap"
-    for token in ["\n\ndef settlement_bookings", "\n\ndef unsettled_bookings", "\n\ndef render_settlements", "\n\ndef render_planning"]:
+    for token in ["\n\ndef mark_client_collected", "\n\ndef settlement_bookings", "\n\ndef render_settlements", "\n\ndef render_planning"]:
         if token in s:
             start = s.index(token)
             end = s.index(boot, start)
@@ -489,24 +470,17 @@ if "_next_section" in st.session_state:
     st.session_state["section"] = nxt if nxt in allowed_sections else "Planning"
 if "section" not in st.session_state or st.session_state["section"] not in allowed_sections:
     st.session_state["section"] = "Planning"
-
 section = st.radio("Sezione", allowed_sections, horizontal=True, key="section", label_visibility="collapsed")
-
 col_access, col_logout = st.columns([4, 1])
 with col_access:
-    try:
-        st.caption(f"Accesso: {current_user().capitalize()} · {'Admin' if is_admin() else 'Istruttrice'}")
-    except Exception:
-        pass
+    try: st.caption(f"Accesso: {current_user().capitalize()} · {'Admin' if is_admin() else 'Istruttrice'}")
+    except Exception: pass
 with col_logout:
     if st.button("Logout", key="logout_user_button", use_container_width=True):
-        for k in ["authenticated", "current_user", "current_role", "section", "client_open_id", "archive_open_client_id", "archive_open_select"]:
-            st.session_state.pop(k, None)
+        for k in ["authenticated", "current_user", "current_role", "section", "client_open_id", "archive_open_client_id", "archive_open_select"]: st.session_state.pop(k, None)
         st.rerun()'''
     m = re.search(r'(?:allowed_sections = visible_sections\(\)|if "_next_section" in st\.session_state:).*?section = st\.radio\("Sezione", (?:allowed_sections|SECTIONS), horizontal=True, key="section", label_visibility="collapsed"\)', s, flags=re.S)
-    if m:
-        s = s[:m.start()] + menu + s[m.end():]
-
+    if m: s = s[:m.start()] + menu + s[m.end():]
     dispatch = '''if section == "Planning":
     render_planning(data, sha)
 elif section == "Settimana":
@@ -523,13 +497,8 @@ elif section == "Archivio":
     render_archive(data, sha)
 '''
     pos = s.rfind('if section == "Planning":')
-    if pos == -1:
-        pos = s.rfind('if section == "Settimana":')
-    if pos != -1:
-        s = s[:pos] + dispatch
-    else:
-        s += "\n" + dispatch
-
+    if pos == -1: pos = s.rfind('if section == "Settimana":')
+    s = s[:pos] + dispatch if pos != -1 else s + "\n" + dispatch
     p.write_text(s, encoding="utf-8")
 
 try:
