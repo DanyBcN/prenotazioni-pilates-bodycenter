@@ -1,28 +1,25 @@
-import base64 as _base64
-import json as _json
-import datetime as _datetime
+from pathlib import Path
 import requests as _requests
 import streamlit as _st
 
-_original_timedelta = _datetime.timedelta
+# Applica modifiche runtime prima che Streamlit esegua app.py.
+# Serve perché Streamlit Cloud può continuare a usare cache/runtime vecchi se la logica non è forzata qui.
+_app_path = Path(__file__).resolve().with_name("app.py")
+if _app_path.exists():
+    _text = _app_path.read_text(encoding="utf-8")
+    _new = _text
+    _new = _new.replace('st.subheader("Planning 14 giorni")', 'st.subheader("Planning 3 mesi")')
+    _new = _new.replace('st.subheader("Planning 15 giorni")', 'st.subheader("Planning 3 mesi")')
+    _new = _new.replace('days = 14\n    if bc_is_admin():', 'days = 92\n    if bc_is_admin():')
+    _new = _new.replace('days = 15\n    if bc_is_admin():', 'days = 92\n    if bc_is_admin():')
+    _new = _new.replace('giorni = 14\n    if is_admin():', 'giorni = 92\n    if is_admin():')
+    _new = _new.replace('giorni=14\n    if is_admin():', 'giorni=92\n    if is_admin():')
+    _new = _new.replace('days = 14\n    view =', 'days = 92\n    view =')
+    _new = _new.replace('days = 15\n    view =', 'days = 92\n    view =')
+    if _new != _text:
+        _app_path.write_text(_new, encoding="utf-8")
 
-def _bodycenter_timedelta(*args, **kwargs):
-    if kwargs.get("days") == 13:
-        kwargs = dict(kwargs)
-        kwargs["days"] = 91
-    return _original_timedelta(*args, **kwargs)
-
-_datetime.timedelta = _bodycenter_timedelta
-
-_original_subheader = _st.subheader
-
-def _bodycenter_subheader(text, *args, **kwargs):
-    if text == "Planning 14 giorni":
-        text = "Planning 3 mesi"
-    return _original_subheader(text, *args, **kwargs)
-
-_st.subheader = _bodycenter_subheader
-
+# Dopo un salvataggio su GitHub, rilegge subito i dati appena salvati senza aspettare refresh/cache.
 _original_get = _requests.get
 _original_put = _requests.put
 
