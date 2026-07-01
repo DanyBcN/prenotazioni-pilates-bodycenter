@@ -15,7 +15,6 @@ LOCAL_DATA_PATH = "data/bookings.json"
 LOGO_PATH = "assets/logo.png"
 INSTRUCTORS = ["Grazia", "Alice"]
 DARK = "#243142"
-GREEN = "#496744"
 
 SCHEDULE = {
     0: ["08:30", "09:30", "10:30", "17:00", "18:00", "19:00"],
@@ -189,7 +188,7 @@ def sections():
 
 
 def go(section):
-    st.session_state["section"] = section
+    st.session_state["_next_section"] = section
     st.rerun()
 
 
@@ -440,7 +439,6 @@ def header():
     .bc-logo {{width:104px; max-height:104px; object-fit:contain;}}
     .bc-title {{font-size:42px; font-weight:800; color:{DARK}; line-height:1.05;}}
     .bc-subtitle {{font-size:17px; color:#5b6775; margin-top:12px;}}
-    .action-box {{border:1px solid #dfe7e2; border-radius:16px; padding:14px; background:#fbfdfc; margin-bottom:12px;}}
     @media(max-width:700px) {{.bc-header{{padding:16px;gap:12px}}.bc-logo{{width:68px}}.bc-title{{font-size:26px}}.bc-subtitle{{font-size:13px}}}}
     </style>
     """, unsafe_allow_html=True)
@@ -477,11 +475,9 @@ def render_incassi(data, sha):
     rows = open_rows(data, instr)
     pay_rows = [b for b in rows if not is_gift(b)]
     gift_rows = [b for b in rows if is_gift(b)]
-    unpaid = [b for b in pay_rows if not as_bool(b.get("paid", False))]
-    paid = [b for b in pay_rows if as_bool(b.get("paid", False))]
-    all_editable = sorted(pay_rows, key=lambda x: (str(x.get("date", "")), str(x.get("time", "")), str(x.get("name", ""))))
-    paid = sorted(paid, key=lambda x: (str(x.get("date", "")), str(x.get("time", "")), str(x.get("name", ""))))
-    unpaid = sorted(unpaid, key=lambda x: (str(x.get("date", "")), str(x.get("time", "")), str(x.get("name", ""))))
+    unpaid = sorted([b for b in pay_rows if not as_bool(b.get("paid", False))], key=lambda x: (str(x.get("date", "")), str(x.get("time", "")), str(x.get("name", ""))))
+    paid = sorted([b for b in pay_rows if as_bool(b.get("paid", False))], key=lambda x: (str(x.get("date", "")), str(x.get("time", "")), str(x.get("name", ""))))
+    editable = sorted(pay_rows, key=lambda x: (str(x.get("date", "")), str(x.get("time", "")), str(x.get("name", ""))))
     totale = sum(money(b.get("amount", 0)) for b in pay_rows)
     da_incassare = sum(money(b.get("amount", 0)) for b in unpaid)
     incassato = sum(money(b.get("amount", 0)) for b in paid)
@@ -493,42 +489,36 @@ def render_incassi(data, sha):
     c.metric("Incassato palestra", f"€ {incassato:.2f}")
     d.metric("Omaggio", len(gift_rows))
 
-    st.markdown("### Azioni rapide")
-    st.markdown("**1) Modifica importo o segna pagamento**")
+    st.markdown("### Azione unica: importo e pagamento")
     with st.container(border=True):
-        if all_editable:
-            idx = st.selectbox("Prenotazione", range(len(all_editable)), format_func=lambda i: row_label(all_editable[i]), key="cash_main_select")
-            selected = all_editable[idx]
+        if editable:
+            idx = st.selectbox("Prenotazione", range(len(editable)), format_func=lambda i: row_label(editable[i]), key="cash_main_select")
+            selected = editable[idx]
             c1, c2 = st.columns([1, 1])
             new_amount = c1.number_input("Importo totale (€)", min_value=0.0, value=float(money(selected.get("amount", 0))), step=1.0, format="%.2f", key="cash_main_amount")
-            mark_now = c2.checkbox("Segna come incassato dalla palestra", value=as_bool(selected.get("paid", False)), key="cash_main_paid")
+            mark_now = c2.checkbox("Incassato dalla palestra", value=as_bool(selected.get("paid", False)), key="cash_main_paid")
             note = st.text_input("Nota opzionale", placeholder="es. pacchetto 5 sedute", key="cash_main_note")
-            if st.button("Salva importo / pagamento", type="primary", key="cash_main_save", use_container_width=is_mobile()):
-                ok1, msg1 = update_amount(data, selected.get("id"), new_amount, note)
-                if ok1 and mark_now and not as_bool(selected.get("paid", False)):
-                    ok2, msg2 = mark_paid(data, selected.get("id"))
-                    if not ok2:
-                        st.error(msg2)
-                        return
-                if ok1:
-                    st.session_state["section"] = "Incassi"
+            if st.button("Salva", type="primary", key="cash_main_save", use_container_width=is_mobile()):
+                ok, msg = update_amount(data, selected.get("id"), new_amount, note)
+                if ok and mark_now and not as_bool(selected.get("paid", False)):
+                    ok, msg = mark_paid(data, selected.get("id"))
+                if ok:
                     save_data(data, sha, "Save amount and payment")
-                    st.success("Salvato. Rimango in Incassi.")
+                    st.success("Salvato")
                     go("Incassi")
                 else:
-                    st.error(msg1)
+                    st.error(msg)
         else:
             st.info("Nessuna prenotazione modificabile.")
 
-    st.markdown("**2) Chiudi quota 40%**")
+    st.markdown("### Quota 40%")
     with st.container(border=True):
         if paid:
-            qidx = st.selectbox("Quota da chiudere", range(len(paid)), format_func=lambda i: row_label(paid[i]) + f" · quota € {money(paid[i].get('amount',0))*instructor_share():.2f}", key="share_main_select")
+            qidx = st.selectbox("Prenotazione", range(len(paid)), format_func=lambda i: row_label(paid[i]) + f" · quota € {money(paid[i].get('amount',0))*instructor_share():.2f}", key="share_main_select")
             button_label = "Segna quota 40% pagata ad Alice/Grazia" if is_admin() else "Segna quota 40% ricevuta"
             if st.button(button_label, key="share_main_save", use_container_width=is_mobile()):
                 ok, msg = mark_share(data, paid[qidx].get("id"))
                 if ok:
-                    st.session_state["section"] = "Incassi"
                     save_data(data, sha, "Close instructor share")
                     st.success(msg)
                     go("Incassi")
@@ -539,31 +529,18 @@ def render_incassi(data, sha):
 
     st.markdown("### Elenchi")
     with st.expander("Da incassare", expanded=True):
-        if unpaid:
-            st.dataframe(table_df(unpaid), use_container_width=True, hide_index=True)
-        else:
-            st.success("Nessun importo da incassare.")
+        st.dataframe(table_df(unpaid), use_container_width=True, hide_index=True) if unpaid else st.success("Nessun importo da incassare.")
     with st.expander("Incassati dalla palestra", expanded=True):
-        if paid:
-            st.dataframe(table_df(paid), use_container_width=True, hide_index=True)
-        else:
-            st.info("Nessun incasso registrato.")
+        st.dataframe(table_df(paid), use_container_width=True, hide_index=True) if paid else st.info("Nessun incasso registrato.")
     with st.expander("Sedute omaggio", expanded=False):
-        if gift_rows:
-            st.dataframe(table_df(gift_rows), use_container_width=True, hide_index=True)
-        else:
-            st.info("Nessuna seduta omaggio.")
-
+        st.dataframe(table_df(gift_rows), use_container_width=True, hide_index=True) if gift_rows else st.info("Nessuna seduta omaggio.")
     hist = []
     for x in data.get("settlements", []):
         if instr and x.get("instructor") != instr:
             continue
         hist.append({"Data": x.get("created_at", ""), "Istruttrice": x.get("instructor", ""), "Quota 40%": money(x.get("instructor_amount", 0)), "Quota BodyCenter 60%": money(x.get("gym_amount", 0)), "Lezioni": int(x.get("lessons", 0) or 0)})
     with st.expander("Storico quote già chiuse", expanded=False):
-        if hist:
-            st.dataframe(pd.DataFrame(hist), use_container_width=True, hide_index=True)
-        else:
-            st.info("Nessuna quota chiusa.")
+        st.dataframe(pd.DataFrame(hist), use_container_width=True, hide_index=True) if hist else st.info("Nessuna quota chiusa.")
 
 
 def render_booking(data, sha):
@@ -717,11 +694,8 @@ def render_planning_grid(rows, title, days=14, show_instructor=True):
 
 def render_planning(data, sha):
     st.subheader("Planning 14 giorni")
-    a, b = st.columns([1, 1])
-    if a.button("Vai a Incassi", type="primary", use_container_width=is_mobile()):
+    if st.button("Apri Incassi", type="primary", use_container_width=is_mobile()):
         go("Incassi")
-    if b.button("Nuova prenotazione", use_container_width=is_mobile()):
-        go("Prenota")
     cancel_box(data, sha)
     giorni = 14
     if is_admin():
@@ -812,6 +786,9 @@ def run():
     data, sha = load_data()
     data = ensure_data(data)
     allowed = sections()
+    next_section = st.session_state.pop("_next_section", None)
+    if next_section in allowed:
+        st.session_state["section"] = next_section
     if "section" not in st.session_state or st.session_state["section"] not in allowed:
         st.session_state["section"] = "Planning"
     section = st.radio("Sezione", allowed, horizontal=True, key="section", label_visibility="collapsed")
@@ -820,7 +797,7 @@ def run():
         st.caption(f"Accesso: {current_user().capitalize()} · {'Admin' if is_admin() else 'Istruttrice'}")
     with col_logout:
         if st.button("Logout", key="logout_user_button", use_container_width=True):
-            for k in ["authenticated", "current_user", "current_role", "section"]:
+            for k in ["authenticated", "current_user", "current_role", "section", "_next_section"]:
                 st.session_state.pop(k, None)
             st.rerun()
     st.divider()
