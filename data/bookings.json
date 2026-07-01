@@ -414,7 +414,7 @@
       "phone": "3936561839",
       "email": "",
       "note": "",
-      "status": "Confermata",
+      "status": "Annullata",
       "amount": 30.0,
       "paid": false,
       "gift": false,
@@ -422,7 +422,9 @@
       "paid_to_gym_by": "",
       "settlement_id": "",
       "instructor": "Grazia",
-      "created_by": "grazia"
+      "created_by": "grazia",
+      "cancelled_at": "2026-07-01T20:54:52",
+      "cancelled_by": "grazia"
     }
   ],
   "clients": [
