@@ -56,17 +56,24 @@ def _patch_app_simple_cash():
     totale = sum(money(b.get("amount", 0)) for b in pay_rows)
     da_incassare = sum(money(b.get("amount", 0)) for b in unpaid)
     incassato = sum(money(b.get("amount", 0)) for b in paid)
+    quota_aperta = incassato * instructor_share()
+    quota_chiusa = sum(money(x.get("instructor_amount", 0)) for x in data.get("settlements", []) if not instr or x.get("instructor") == instr)
 
     st.subheader("Incassi")
-    a, b, c, d = st.columns(4)
+    a, b, c, d, e = st.columns(5)
     a.metric("Totale aperto", f"€ {totale:.2f}")
     b.metric("Da incassare", f"€ {da_incassare:.2f}")
     c.metric("Incassato palestra", f"€ {incassato:.2f}")
-    d.metric("Omaggio", len(gift_rows))
+    d.metric("Tuo 40% da ricevere" if not is_admin() else "40% da dare", f"€ {quota_aperta:.2f}")
+    e.metric("Omaggio", len(gift_rows))
+    if not is_admin():
+        st.info(f"Quota {current_instructor()}: da ricevere € {quota_aperta:.2f} · già ricevuto € {quota_chiusa:.2f}")
+    else:
+        st.info(f"Quote istruttrici: da dare € {quota_aperta:.2f} · già pagate € {quota_chiusa:.2f}")
 
     st.markdown("### Azione unica")
     with st.container(border=True):
-        st.caption("Qui puoi correggere anche dopo: importo, pagamento e seduta omaggio.")
+        st.caption("Scegli la prenotazione e correggi tutto da qui: importo, pagamento oppure omaggio.")
         if all_rows:
             idx = st.selectbox("Prenotazione", range(len(all_rows)), format_func=lambda i: row_label(all_rows[i]), key="cash_main_select")
             selected = all_rows[idx]
@@ -113,6 +120,7 @@ def _patch_app_simple_cash():
 
     st.markdown("### Quota 40%")
     with st.container(border=True):
+        st.metric("Tuo 40% da ricevere" if not is_admin() else "40% da dare alle istruttrici", f"€ {quota_aperta:.2f}")
         if paid:
             qidx = st.selectbox("Prenotazione", range(len(paid)), format_func=lambda i: row_label(paid[i]) + f" · quota € {money(paid[i].get('amount',0))*instructor_share():.2f}", key="share_main_select")
             button_label = "Segna quota 40% pagata ad Alice/Grazia" if is_admin() else "Segna quota 40% ricevuta"
@@ -139,7 +147,7 @@ def _patch_app_simple_cash():
         if instr and x.get("instructor") != instr:
             continue
         hist.append({"Data": x.get("created_at", ""), "Istruttrice": x.get("instructor", ""), "Quota 40%": money(x.get("instructor_amount", 0)), "Quota BodyCenter 60%": money(x.get("gym_amount", 0)), "Lezioni": int(x.get("lessons", 0) or 0)})
-    with st.expander("Storico quote già chiuse", expanded=False):
+    with st.expander("Storico quote già chiuse", expanded=True):
         st.dataframe(pd.DataFrame(hist), use_container_width=True, hide_index=True) if hist else st.info("Nessuna quota chiusa.")''')
 
     p.write_text(s, encoding="utf-8")
