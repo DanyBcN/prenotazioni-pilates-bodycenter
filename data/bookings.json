@@ -425,6 +425,27 @@
       "created_by": "grazia",
       "cancelled_at": "2026-07-01T20:54:52",
       "cancelled_by": "grazia"
+    },
+    {
+      "id": "b_20260701205551682312",
+      "created_at": "2026-07-01T20:55:51",
+      "client_id": "c_20260625174834510443",
+      "date": "2026-07-08",
+      "day": "Mercoledì",
+      "time": "14:30",
+      "name": "Cavallo Anna",
+      "phone": "+39 345 721 1028",
+      "email": "",
+      "note": "",
+      "status": "Confermata",
+      "amount": 0.0,
+      "paid": false,
+      "gift": false,
+      "paid_to_gym_at": "",
+      "paid_to_gym_by": "",
+      "settlement_id": "",
+      "instructor": "Grazia",
+      "created_by": "grazia"
     }
   ],
   "clients": [
