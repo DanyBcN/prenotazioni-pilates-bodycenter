@@ -150,6 +150,66 @@ def _patch_app_simple_cash():
     with st.expander("Storico quote già chiuse", expanded=True):
         st.dataframe(pd.DataFrame(hist), use_container_width=True, hide_index=True) if hist else st.info("Nessuna quota chiusa.")''')
 
+    s = _rf(s, "render_clients", '''def render_clients(data, sha):
+    st.subheader("Clienti")
+    with st.expander("Aggiungi cliente", expanded=False):
+        a, b = st.columns(2)
+        last = a.text_input("Cognome", key="client_add_last")
+        first = b.text_input("Nome", key="client_add_first")
+        c, d = st.columns(2)
+        phone = c.text_input("Telefono", key="client_add_phone")
+        email = d.text_input("Email", key="client_add_email")
+        birth = st.text_input("Data di nascita", placeholder="gg-mm-aaaa", key="client_add_birth")
+        notes = st.text_area("Note", key="client_add_notes")
+        if st.button("Salva cliente", type="primary"):
+            ok, msg, _ = add_client(data, first, last, phone, email, notes, birth)
+            if ok:
+                save_data(data, sha, "Add client")
+                go("Clienti")
+            else:
+                st.error(msg)
+
+    df = pd.DataFrame([{"ID": c.get("id"), "Cognome": c.get("last_name", ""), "Nome": c.get("first_name", ""), "Telefono": c.get("phone", ""), "Email": c.get("email", ""), "Note": c.get("notes", "")} for c in data.get("clients", [])])
+    if not df.empty:
+        st.dataframe(df.drop(columns=["ID"], errors="ignore").sort_values(["Cognome", "Nome"]), use_container_width=True, hide_index=True)
+    else:
+        st.info("Nessun cliente.")
+
+    opts = client_options(data)
+    if opts:
+        st.markdown("### Modifica scheda cliente")
+        cid_map = {option_to_client_id(o): o for o in opts}
+        selected_cid = st.session_state.get("edit_client_cid")
+        if selected_cid not in cid_map:
+            selected_cid = option_to_client_id(opts[0])
+        selected_index = list(cid_map.keys()).index(selected_cid) if selected_cid in cid_map else 0
+        choice = st.selectbox("Cliente da modificare", opts, index=selected_index, key="edit_client_select_fixed")
+        cid = option_to_client_id(choice)
+        if st.session_state.get("edit_client_cid") != cid:
+            st.session_state["edit_client_cid"] = cid
+            st.rerun()
+        c = get_client(data, cid)
+        if not c:
+            st.error("Cliente non trovato.")
+            return
+        a, b = st.columns(2)
+        last = a.text_input("Cognome", value=c.get("last_name", ""), key=f"edit_last_{cid}")
+        first = b.text_input("Nome", value=c.get("first_name", ""), key=f"edit_first_{cid}")
+        x, y = st.columns(2)
+        phone = x.text_input("Telefono", value=c.get("phone", ""), key=f"edit_phone_{cid}")
+        email = y.text_input("Email", value=c.get("email", ""), key=f"edit_email_{cid}")
+        birth = st.text_input("Data di nascita", value=c.get("birth_date", ""), key=f"edit_birth_{cid}")
+        notes = st.text_area("Note", value=c.get("notes", ""), key=f"edit_notes_{cid}")
+        if st.button("Salva scheda cliente", key=f"save_client_edit_{cid}"):
+            ok, msg = update_client(data, cid, first, last, phone, email, birth, notes)
+            if ok:
+                st.session_state["edit_client_cid"] = cid
+                save_data(data, sha, "Update client")
+                st.success("Scheda cliente aggiornata.")
+                go("Clienti")
+            else:
+                st.error(msg)''')
+
     p.write_text(s, encoding="utf-8")
 
 
