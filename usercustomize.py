@@ -15,6 +15,32 @@ def _patch_cash_workflow_visibility():
         return
     s = p.read_text(encoding="utf-8")
 
+    helper = '''
+
+def update_booking_amount(data, booking_id, new_amount, note=""):
+    for b in data.get("bookings", []):
+        if b.get("id") == booking_id:
+            if b.get("settlement_id"):
+                return False, "Quota già chiusa: non posso modificare l'importo."
+            if is_gift_booking(b):
+                return False, "Seduta omaggio: importo bloccato a € 0."
+            old_amount = money(b.get("amount", 0))
+            new_amount = money(new_amount)
+            b["amount"] = new_amount
+            b["amount_updated_at"] = datetime.now().isoformat(timespec="seconds")
+            b["amount_updated_by"] = current_user()
+            log = f"Importo modificato da € {old_amount:.2f} a € {new_amount:.2f} da {current_user()}"
+            if note.strip():
+                log += f" - {note.strip()}"
+            b["note"] = (b.get("note", "") + " | " if b.get("note") else "") + log
+            return True, f"Importo aggiornato: € {old_amount:.2f} → € {new_amount:.2f}."
+    return False, "Prenotazione non trovata."
+'''
+    if "def update_booking_amount(" not in s:
+        anchor = "\ndef render_cash_workflow("
+        if anchor in s:
+            s = s.replace(anchor, helper + anchor, 1)
+
     repl = '''def render_cash_workflow(data, sha, compact=False):
     instr = None if is_admin() else instructor_name_from_user()
     rows = open_cash_rows(data, instr)
@@ -34,6 +60,25 @@ def _patch_cash_workflow_visibility():
     c.metric("Incassato dalla palestra", f"€ {incassato:.2f}")
     d.metric("Sedute omaggio", len(gift_rows))
     st.caption("Quando segni un pagamento come incassato, non sparisce: passa sotto 'Incassati dalla palestra' e poi nella quota 40% da pagare/ricevere.")
+
+    editable = sorted(pay_rows, key=lambda x: (str(x.get("date", "")), str(x.get("time", "")), str(x.get("name", ""))))
+    with st.expander("Modifica importo prenotazione / pacchetto sedute", expanded=False):
+        st.caption("Serve quando una cliente era stata inserita a € 30, poi paga più sedute, ad esempio € 140. Non è possibile modificare sedute omaggio o quote già chiuse.")
+        if editable:
+            j = st.selectbox("Prenotazione da modificare", range(len(editable)), format_func=lambda k: _pay_label(editable[k]), key="edit_amount_select")
+            current_amount = money(editable[j].get("amount", 0))
+            new_amount = st.number_input("Nuovo importo totale (€)", min_value=0.0, value=float(current_amount), step=1.0, format="%.2f", key="edit_amount_value")
+            note_amount = st.text_input("Nota opzionale", placeholder="es. pacchetto 5 sedute", key="edit_amount_note")
+            if st.button("Aggiorna importo", key="edit_amount_btn", use_container_width=is_mobile_client()):
+                ok, msg = update_booking_amount(data, editable[j].get("id"), new_amount, note_amount)
+                if ok:
+                    save_data(data, sha, "Update booking amount")
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+        else:
+            st.info("Nessuna prenotazione con importo modificabile.")
 
     st.markdown("#### 1. Da incassare")
     if da_incassare:
