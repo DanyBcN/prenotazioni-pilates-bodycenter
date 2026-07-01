@@ -75,13 +75,13 @@ def settled_share_total(data, instructor=None):
 
 def render_payment_tracking_box(data, sha):
     with st.expander("Pagamenti palestra / quota istruttrice", expanded=False):
-        st.caption("Il pagamento del cliente viene segnato come pagamento alla palestra. La quota istruttrice viene segnata solo quando la palestra la versa all'istruttrice.")
+        st.caption("L'istruttrice segna il pagamento fatto alla palestra. Quando riceve la propria quota, segna anche la quota istruttrice ricevuta.")
 
         active = [b for b in data.get("bookings", []) if b.get("status") != "Annullata" and not b.get("settlement_id")]
         unpaid_gym = sorted([b for b in active if not to_bool(b.get("paid", False))], key=lambda x: (str(x.get("date", "")), str(x.get("time", "")), str(x.get("instructor", "")), str(x.get("name", ""))))
         if unpaid_gym:
             st.markdown("**1. Segna pagamento alla palestra**")
-            idx = st.selectbox("Prenotazione pagata in palestra", list(range(len(unpaid_gym))), format_func=lambda i: _payment_label(unpaid_gym[i]), key="paid_to_gym_select")
+            idx = st.selectbox("Prenotazione pagata alla palestra", list(range(len(unpaid_gym))), format_func=lambda i: _payment_label(unpaid_gym[i]), key="paid_to_gym_select")
             if st.button("Segna pagamento alla palestra", key="paid_to_gym_btn", use_container_width=is_mobile_client()):
                 ok, msg = mark_paid_to_gym(data, unpaid_gym[idx].get("id"))
                 if ok:
@@ -155,8 +155,8 @@ def render_payment_tracking_box(data, sha):
         total_unpaid_gym = sum(money(b.get("amount", 0)) for b in rows if not to_bool(b.get("paid", False)))
         total_due_instr = sum(money(b.get("amount", 0)) * instructor_share() for b in rows if to_bool(b.get("paid", False)) and not b.get("settlement_id"))
         a, b, c = st.columns(3)
-        a.metric("Incassato dalla palestra", f"€ {total_paid_gym:.2f}")
-        b.metric("Da incassare in palestra", f"€ {total_unpaid_gym:.2f}")
+        a.metric("Incassato da Alice/Grazia", f"€ {total_paid_gym:.2f}")
+        b.metric("Da incassare da Alice/Grazia", f"€ {total_unpaid_gym:.2f}")
         c.metric("Da dare alle istruttrici", f"€ {total_due_instr:.2f}")
         table = []
         for instr in INSTRUCTORS:
@@ -165,7 +165,7 @@ def render_payment_tracking_box(data, sha):
             unpaid_gym = sum(money(x.get("amount", 0)) for x in r if not to_bool(x.get("paid", False)))
             due = paid_gym * instructor_share()
             already = settled_share_total(data, instr)
-            table.append({"Istruttrice": instr, "Palestra incassato": paid_gym, "Da incassare palestra": unpaid_gym, "Quota da dare 40%": due, "Quota già data": already, "Quota palestra 60%": paid_gym * gym_share()})
+            table.append({"Istruttrice": instr, "Incassato da": instr, "Totale incassato": paid_gym, "Da incassare": unpaid_gym, "Quota da dare 40%": due, "Quota già data": already, "Quota BodyCenter 60%": paid_gym * gym_share()})
         st.dataframe(pd.DataFrame(table), use_container_width=True, hide_index=True)
         render_payment_tracking_box(data, sha)
         return
@@ -180,17 +180,17 @@ def render_payment_tracking_box(data, sha):
     a, b, c, d = st.columns(4)
     a.metric("Da ricevere dalla palestra", f"€ {due:.2f}")
     b.metric("Già ricevuto", f"€ {already:.2f}")
-    c.metric("Non ancora pagato in palestra", f"€ {unpaid_gym:.2f}")
+    c.metric("Non ancora pagato alla palestra", f"€ {unpaid_gym:.2f}")
     d.metric("Quota potenziale 40%", f"€ {potential:.2f}")
-    st.caption("Il totale cliente è incassato dalla palestra. Qui vedi solo la tua quota e lo stato dei pagamenti.")
+    st.caption("Il totale cliente è registrato come pagamento alla palestra. Qui vedi solo la tua quota e lo stato dei pagamenti.")
     if my:
         df = pd.DataFrame([{
             "Data": date_it(x.get("date")),
             "Ora": x.get("time", ""),
             "Cliente": x.get("name", ""),
-            "Pagamento palestra": "Sì" if to_bool(x.get("paid", False)) else "No",
+            "Pagamento alla palestra": "Sì" if to_bool(x.get("paid", False)) else "No",
             "Quota 40%": round(money(x.get("amount", 0)) * instructor_share(), 2),
-            "Quota palestra 60%": round(money(x.get("amount", 0)) * gym_share(), 2),
+            "Quota BodyCenter 60%": round(money(x.get("amount", 0)) * gym_share(), 2),
             "Stato quota": "Da ricevere" if to_bool(x.get("paid", False)) else "In attesa pagamento palestra",
         } for x in my])
         st.dataframe(df, use_container_width=True, hide_index=True)
@@ -200,7 +200,7 @@ def render_payment_tracking_box(data, sha):
     hist = []
     for x in data.get("settlements", []):
         if x.get("instructor") == instr:
-            hist.append({"Data": x.get("created_at", ""), "Quota ricevuta": money(x.get("instructor_amount", 0)), "Quota palestra 60%": money(x.get("gym_amount", 0)), "Lezioni": int(x.get("lessons", 0) or 0)})
+            hist.append({"Data": x.get("created_at", ""), "Quota ricevuta": money(x.get("instructor_amount", 0)), "Quota BodyCenter 60%": money(x.get("gym_amount", 0)), "Lezioni": int(x.get("lessons", 0) or 0)})
     if hist:
         st.markdown("### Storico quote ricevute")
         st.dataframe(pd.DataFrame(hist), use_container_width=True, hide_index=True)''')
