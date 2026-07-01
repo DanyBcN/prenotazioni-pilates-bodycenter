@@ -46,16 +46,18 @@
       "time": "17:30",
       "name": "Grosso Elisa",
       "phone": "3482768714",
-      "note": "verificare orario",
+      "note": "verificare orario | Importo modificato da € 30.00 a € 140.00 da grazia - 5 sedute",
       "status": "Confermata",
-      "amount": 30.0,
+      "amount": 140.0,
       "paid": false,
       "instructor": "Grazia",
       "created_by": "staff",
       "client_id": "c_20260625000100987069",
       "email": "grossoelisa24@yahoo.it",
       "settlement_id": "",
-      "gift": false
+      "gift": false,
+      "amount_updated_at": "2026-07-01T19:45:29",
+      "amount_updated_by": "grazia"
     },
     {
       "id": "20260624224611704521",
