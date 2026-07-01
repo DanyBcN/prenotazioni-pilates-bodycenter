@@ -17,7 +17,9 @@
       "client_id": "c_20260625000100987010",
       "email": "",
       "settlement_id": "",
-      "gift": false
+      "gift": false,
+      "paid_to_gym_at": "",
+      "paid_to_gym_by": ""
     },
     {
       "id": "20260624224306383014",
@@ -27,7 +29,7 @@
       "time": "14:00",
       "name": "Montersino Vilma",
       "phone": "3395817122",
-      "note": "",
+      "note": "Segnata come seduta omaggio / prova gratuita",
       "status": "Confermata",
       "amount": 0.0,
       "paid": true,
@@ -36,7 +38,11 @@
       "client_id": "c_20260625000100987054",
       "email": "vilma.montersino@gmail.com",
       "settlement_id": "",
-      "gift": false
+      "gift": true,
+      "paid_to_gym_at": "",
+      "paid_to_gym_by": "grazia",
+      "amount_updated_at": "2026-07-01T20:30:41",
+      "amount_updated_by": "grazia"
     },
     {
       "id": "20260624224436315038",
@@ -78,7 +84,9 @@
       "client_id": "c_20260625000100987082",
       "email": "chiaramarce@gmail.com",
       "settlement_id": "",
-      "gift": false
+      "gift": false,
+      "paid_to_gym_at": "",
+      "paid_to_gym_by": ""
     },
     {
       "id": "20260624224630933994",
@@ -97,7 +105,9 @@
       "client_id": "c_20260625000100987094",
       "email": "chiaramarce@gmail.com",
       "settlement_id": "",
-      "gift": false
+      "gift": false,
+      "paid_to_gym_at": "",
+      "paid_to_gym_by": ""
     },
     {
       "id": "20260624224845555578",
@@ -116,7 +126,9 @@
       "client_id": "c_20260625000100987105",
       "email": "audisio.direzione@gmail.com",
       "settlement_id": "",
-      "gift": false
+      "gift": false,
+      "paid_to_gym_at": "",
+      "paid_to_gym_by": ""
     },
     {
       "id": "20260624224955653521",
@@ -135,7 +147,9 @@
       "client_id": "c_20260625000100987115",
       "email": "elidutto84@gmail.com",
       "settlement_id": "",
-      "gift": false
+      "gift": false,
+      "paid_to_gym_at": "",
+      "paid_to_gym_by": ""
     },
     {
       "id": "b_20260625105703812199",
@@ -154,7 +168,9 @@
       "instructor": "Alice",
       "created_by": "staff",
       "settlement_id": "",
-      "gift": false
+      "gift": false,
+      "paid_to_gym_at": "",
+      "paid_to_gym_by": ""
     },
     {
       "id": "b_20260625105827423945",
@@ -173,7 +189,9 @@
       "instructor": "Alice",
       "created_by": "staff",
       "settlement_id": "",
-      "gift": false
+      "gift": false,
+      "paid_to_gym_at": "",
+      "paid_to_gym_by": ""
     },
     {
       "id": "b_20260625105854973138",
@@ -192,7 +210,9 @@
       "instructor": "Alice",
       "created_by": "staff",
       "settlement_id": "",
-      "gift": false
+      "gift": false,
+      "paid_to_gym_at": "",
+      "paid_to_gym_by": ""
     },
     {
       "id": "b_20260625135155001631",
@@ -211,7 +231,9 @@
       "instructor": "Alice",
       "created_by": "staff",
       "settlement_id": "",
-      "gift": false
+      "gift": false,
+      "paid_to_gym_at": "",
+      "paid_to_gym_by": ""
     },
     {
       "id": "b_20260625135352487040",
@@ -230,7 +252,9 @@
       "instructor": "Alice",
       "created_by": "staff",
       "settlement_id": "",
-      "gift": false
+      "gift": false,
+      "paid_to_gym_at": "",
+      "paid_to_gym_by": ""
     },
     {
       "id": "b_20260625135714156416",
@@ -249,7 +273,9 @@
       "instructor": "Alice",
       "created_by": "staff",
       "settlement_id": "",
-      "gift": false
+      "gift": false,
+      "paid_to_gym_at": "",
+      "paid_to_gym_by": ""
     },
     {
       "id": "b_20260625175002810332",
@@ -289,7 +315,9 @@
       "instructor": "Grazia",
       "created_by": "staff",
       "settlement_id": "",
-      "gift": false
+      "gift": false,
+      "paid_to_gym_at": "",
+      "paid_to_gym_by": ""
     },
     {
       "id": "b_20260626070224406289",
@@ -308,7 +336,9 @@
       "instructor": "Grazia",
       "created_by": "staff",
       "settlement_id": "",
-      "gift": false
+      "gift": false,
+      "paid_to_gym_at": "",
+      "paid_to_gym_by": ""
     },
     {
       "id": "b_20260626143031872524",
@@ -327,7 +357,9 @@
       "instructor": "Grazia",
       "created_by": "staff",
       "settlement_id": "",
-      "gift": false
+      "gift": false,
+      "paid_to_gym_at": "",
+      "paid_to_gym_by": ""
     },
     {
       "id": "b_20260630103100156496",
@@ -346,7 +378,9 @@
       "instructor": "Grazia",
       "created_by": "staff",
       "settlement_id": "",
-      "gift": false
+      "gift": false,
+      "paid_to_gym_at": "",
+      "paid_to_gym_by": ""
     }
   ],
   "clients": [
