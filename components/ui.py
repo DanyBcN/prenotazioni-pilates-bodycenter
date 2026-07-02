@@ -14,12 +14,20 @@ def header():
     st.markdown(
         """
         <style>
+        .stApp {background:linear-gradient(180deg,#F7F9FC 0%,#FFFFFF 42%);}
         .main .block-container {max-width: 1380px; padding-top: 1rem; padding-bottom: 2rem;}
-        .bc-header {display:flex; align-items:center; gap:22px; margin-bottom:16px;}
+        .bc-header {display:flex; align-items:center; gap:22px; margin-bottom:16px; padding:12px 14px; border:1px solid #E5E7EB; border-radius:12px; background:rgba(255,255,255,.92); box-shadow:0 10px 25px rgba(15,23,42,.05);}
         .bc-title {font-size:40px; font-weight:800; color:#1F2A37; line-height:1.05;}
+        .page-hero {border:1px solid #E5E7EB; border-radius:12px; padding:14px 16px; margin:4px 0 14px; background:linear-gradient(135deg,#FFFFFF 0%,#F8FAFC 100%); box-shadow:0 8px 22px rgba(15,23,42,.045);}
+        .page-eyebrow {font-size:.74rem; font-weight:800; letter-spacing:.04em; text-transform:uppercase; color:#64748B; margin-bottom:3px;}
+        .page-title {font-size:1.55rem; font-weight:850; color:#111827; line-height:1.15;}
+        .page-subtitle {font-size:.92rem; color:#64748B; margin-top:4px;}
         .bc-logo {width:92px; max-height:92px; object-fit:contain;}
         .quick-grid {display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; margin:8px 0 16px;}
-        .quick-card {border:1px solid #D8DEE8; border-radius:8px; padding:12px 14px; background:#fff;}
+        .quick-card {border:1px solid #D8DEE8; border-radius:8px; padding:12px 14px; background:#fff; box-shadow:0 1px 2px rgba(15,23,42,.035);}
+        .bc-attention {border-color:#F59E0B; background:#FFFBEB;}
+        .bc-cash-summary {min-height:118px;}
+        .bc-section-title {font-size:1.05rem; font-weight:850; color:#111827; margin:16px 0 8px;}
         .quick-label {font-size:0.78rem; color:#6B7280; font-weight:700; text-transform:uppercase; letter-spacing:.02em;}
         .quick-value {font-size:1.35rem; font-weight:800; color:#111827; margin-top:2px;}
         .quick-note {font-size:0.82rem; color:#6B7280; margin-top:3px;}
@@ -49,6 +57,9 @@ def header():
           .main .block-container {padding:0.65rem 0.7rem 1.4rem;}
           .bc-header {gap:12px; margin-bottom:10px;}
           .bc-title {font-size:25px;}
+          .page-hero {padding:12px; margin-bottom:10px;}
+          .page-title {font-size:1.25rem;}
+          .page-subtitle {font-size:.84rem;}
           .bc-logo {width:58px; max-height:58px;}
           .quick-grid {grid-template-columns:1fr 1fr; gap:7px;}
           .quick-card {padding:9px 10px;}
@@ -76,6 +87,15 @@ def header():
         encoded = base64.b64encode(Path(LOGO_PATH).read_bytes()).decode("ascii")
         logo = f"<img class='bc-logo' src='data:image/png;base64,{encoded}'>"
     st.markdown(f"<div class='bc-header'>{logo}<div class='bc-title'>{APP_TITLE}</div></div>", unsafe_allow_html=True)
+
+
+def page_header(title: str, subtitle: str = "", eyebrow: str = "Gestionale"):
+    subtitle_html = f"<div class='page-subtitle'>{escape(subtitle)}</div>" if subtitle else ""
+    st.markdown(
+        f"<div class='page-hero'><div class='page-eyebrow'>{escape(eyebrow)}</div>"
+        f"<div class='page-title'>{escape(title)}</div>{subtitle_html}</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def render_downloads(label: str, df: pd.DataFrame, base_name: str):

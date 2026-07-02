@@ -1,10 +1,10 @@
 import streamlit as st
 
-from components.ui import render_booking_cards, render_downloads, render_table_expander
+from components.ui import page_header, render_booking_cards, render_downloads, render_table_expander
 from storage import booking_dataframe
 
 def render_search(data):
-    st.subheader("Cerca")
+    page_header("Cerca", "Trova rapidamente prenotazioni per cliente, telefono, email, istruttrice, nota o data.", "Ricerca")
     query = st.text_input("Cerca cliente, telefono, email, istruttrice, nota, data, ora").strip().lower()
     rows = []
     for b in data["bookings"]:
@@ -12,6 +12,7 @@ def render_search(data):
         if not query or query in haystack:
             rows.append(b)
     df = booking_dataframe(rows)
+    st.caption(f"Risultati trovati: {len(rows)}")
     render_downloads("ricerca", df, "ricerca_prenotazioni")
     render_booking_cards(rows, "Nessun risultato.")
     render_table_expander("Tabella risultati", df, "Nessun risultato.")

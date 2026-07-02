@@ -3,7 +3,7 @@ from datetime import date, timedelta
 import streamlit as st
 
 from auth import current_instructor, is_admin, navigate
-from components.ui import render_booking_cards, render_downloads, render_table_expander
+from components.ui import page_header, render_booking_cards, render_downloads, render_table_expander
 from config import CAPACITY, INSTRUCTORS, PLANNING_DAYS, date_label, is_gift, money, parse_date, yes
 from storage import booking_dataframe, cancel_booking, open_rows, planning_rows, row_label, save_data
 
@@ -120,7 +120,7 @@ def render_planning_grid(rows: list, title: str, days: int = PLANNING_DAYS, show
 
 
 def render_planning(data, sha):
-    st.subheader("Planning 3 mesi")
+    page_header("Planning 3 mesi", "Vista rapida dei prossimi 92 giorni, posti disponibili e prenotazioni in lista attesa.", "Agenda")
     pdf_scope = "" if is_admin() else current_instructor()
     render_dashboard(data, pdf_scope)
     render_quick_actions()

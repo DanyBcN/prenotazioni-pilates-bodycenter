@@ -30,7 +30,7 @@ def run():
 
     with st.sidebar:
         st.markdown("### Menu")
-        st.caption(f"Accesso: {current_user().capitalize()} · {'Admin' if is_admin() else 'Istruttrice'}")
+        st.caption(f"Accesso: {current_user().capitalize()} - {'Admin' if is_admin() else 'Istruttrice'}")
         if st.button("Logout", use_container_width=True):
             for key in [
                 "authenticated",

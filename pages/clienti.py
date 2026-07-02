@@ -2,14 +2,14 @@ import pandas as pd
 import streamlit as st
 
 from auth import navigate
-from components.ui import render_client_cards, render_table_expander
+from components.ui import page_header, render_client_cards, render_table_expander
 from config import full_name
 from storage import (
     add_client, client_options, get_client, option_to_client_id, save_data, update_client,
 )
 
 def render_clients(data, sha):
-    st.subheader("Clienti")
+    page_header("Clienti", "Archivio clienti con schede modificabili e contatti sempre a portata di mano.", "Anagrafica")
 
     with st.expander("Aggiungi cliente", expanded=False):
         c1, c2 = st.columns(2)
@@ -42,6 +42,10 @@ def render_clients(data, sha):
             for c in clients
         ]
     )
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Clienti", len(clients))
+    m2.metric("Con email", len([c for c in clients if c.get("email")]))
+    m3.metric("Con note", len([c for c in clients if c.get("notes")]))
     render_client_cards(clients, "Nessun cliente.")
     render_table_expander("Tabella clienti", clients_df, "Nessun cliente.")
 

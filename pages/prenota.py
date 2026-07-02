@@ -3,6 +3,7 @@ from datetime import date
 import streamlit as st
 
 from auth import current_instructor, navigate
+from components.ui import page_header
 from config import CAPACITY, INSTRUCTORS, SCHEDULE, parse_date
 from storage import (
     add_client, auto_status, client_options, count_confirmed, create_booking, get_client,
@@ -10,7 +11,8 @@ from storage import (
 )
 
 def render_booking(data, sha):
-    st.subheader("Prenota")
+    page_header("Prenota", "Crea una prenotazione scegliendo cliente, data, orario e istruttrice.", "Nuova prenotazione")
+    st.markdown("<div class='bc-section-title'>Cliente</div>", unsafe_allow_html=True)
     mode = st.radio("Cliente", ["Seleziona da archivio", "Nuovo cliente"], horizontal=True)
     client_id = None
 
@@ -43,7 +45,7 @@ def render_booking(data, sha):
         client_id = st.session_state.get("booking_client_id")
 
     if client_id:
-        st.markdown("### Dati prenotazione")
+        st.markdown("<div class='bc-section-title'>Dati prenotazione</div>", unsafe_allow_html=True)
         c1, c2 = st.columns(2)
         selected_date = parse_date(c1.date_input("Data", value=date.today(), min_value=date.today(), format="DD/MM/YYYY"))
         times = SCHEDULE.get(selected_date.weekday(), [])
