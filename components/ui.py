@@ -39,11 +39,17 @@ def header():
         .sidebar-kicker {font-size:.72rem; font-weight:900; letter-spacing:.10em; text-transform:uppercase; opacity:.82;}
         .sidebar-title {font-size:1.28rem; line-height:1.1; font-weight:950; margin-top:4px;}
         .sidebar-subtitle {font-size:.82rem; opacity:.82; margin-top:4px;}
-        .sidebar-menu-label {font-size:.72rem; font-weight:900; letter-spacing:.10em; text-transform:uppercase; color:#244236; margin:18px 2px 6px;}
-        section[data-testid="stSidebar"] .stCaption, section[data-testid="stSidebar"] p {color:rgba(255,255,255,.86);}
+        .sidebar-menu-label {font-size:.72rem; font-weight:900; letter-spacing:.10em; text-transform:uppercase; color:rgba(255,255,255,.78); margin:18px 2px 6px;}
+        section[data-testid="stSidebar"] .stCaption {color:rgba(255,255,255,.86);}
         section[data-testid="stSidebar"] div[role="radiogroup"] {background:#FFFFFF; border:1px solid var(--bc-border); border-radius:14px; padding:8px; box-shadow:0 10px 26px rgba(36,66,54,.13);}
-        section[data-testid="stSidebar"] label[data-baseweb="radio"] {border-radius:10px; padding:8px 10px; margin:2px 0;}
-        section[data-testid="stSidebar"] label[data-baseweb="radio"]:hover {background:var(--bc-green-50);}
+        section[data-testid="stSidebar"] div[role="radiogroup"] label {border-radius:10px; padding:9px 10px; margin:2px 0; color:var(--bc-green-900) !important;}
+        section[data-testid="stSidebar"] div[role="radiogroup"] label p,
+        section[data-testid="stSidebar"] div[role="radiogroup"] label span,
+        section[data-testid="stSidebar"] div[role="radiogroup"] label div {color:var(--bc-green-900) !important; opacity:1 !important; font-weight:800;}
+        section[data-testid="stSidebar"] div[role="radiogroup"] label:hover {background:var(--bc-green-50);}
+        section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) {background:var(--bc-green-100); box-shadow:inset 0 0 0 1px rgba(63,111,86,.18);}
+        section[data-testid="stSidebar"] .stButton button {background:#FFFFFF; color:var(--bc-green-800) !important; border-color:rgba(95,143,107,.45);}
+        section[data-testid="stSidebar"] .stButton button p {color:var(--bc-green-800) !important; font-weight:850;}
         .bc-header {display:flex; align-items:center; gap:22px; margin-bottom:16px; padding:16px 18px; border:1px solid var(--bc-border); border-radius:16px; background:linear-gradient(135deg,rgba(255,255,255,.96),rgba(245,250,246,.94)); box-shadow:var(--bc-shadow);}
         .bc-title {font-size:40px; font-weight:900; color:var(--bc-green-900); line-height:1.05; letter-spacing:-.01em;}
         .bc-logo {width:92px; max-height:92px; object-fit:contain; filter:drop-shadow(0 8px 14px rgba(36,66,54,.18));}
