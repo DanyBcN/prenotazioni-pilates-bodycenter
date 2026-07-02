@@ -22,12 +22,14 @@ except Exception:
 
 APP_TITLE = "Prenotazioni Pilates Reformer"
 DATA_PATH = "data/bookings.json"
+BACKUP_DIR = "data/backups"
 LOGO_PATH = "assets/logo.png"
 INSTRUCTORS = ["Grazia", "Alice"]
 CAPACITY = 4
 PLANNING_DAYS = 92
 SHARE_INSTRUCTOR = 0.40
 SHARE_GYM = 0.60
+AUDIT_LOG_LIMIT = 1000
 
 SCHEDULE = {
     0: ["08:30", "09:30", "10:30", "17:00", "18:00", "19:00"],
@@ -193,6 +195,32 @@ def navigate(section: str):
     st.rerun()
 
 
+def audit_event(data: dict, action: str, target_type: str = "", target_id: str = "", details: dict | None = None):
+    entry = {
+        "id": new_id("audit_"),
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "user": current_user(),
+        "action": action,
+        "target_type": target_type,
+        "target_id": target_id,
+        "details": details or {},
+    }
+    data.setdefault("audit_log", []).append(entry)
+    data["audit_log"] = data["audit_log"][-AUDIT_LOG_LIMIT:]
+    return entry
+
+
+def backup_local_data():
+    path = Path(DATA_PATH)
+    if not path.exists():
+        return
+    backup_dir = Path(BACKUP_DIR)
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_path = backup_dir / f"bookings_{timestamp}.json"
+    backup_path.write_bytes(path.read_bytes())
+
+
 def load_data():
     if st.session_state.get("_fresh_data") is not None:
         return st.session_state.pop("_fresh_data"), st.session_state.pop("_fresh_sha", None)
@@ -241,6 +269,7 @@ def save_data(data: dict, sha=None, message: str = "Update data"):
         return
 
     Path(DATA_PATH).parent.mkdir(parents=True, exist_ok=True)
+    backup_local_data()
     Path(DATA_PATH).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     st.session_state["_fresh_data"] = data
 
@@ -249,6 +278,7 @@ def ensure_data(data: dict) -> dict:
     data.setdefault("bookings", [])
     data.setdefault("clients", [])
     data.setdefault("settlements", [])
+    data.setdefault("audit_log", [])
 
     for client in data["clients"]:
         client.setdefault("id", new_id("c_"))
@@ -341,6 +371,7 @@ def add_client(data: dict, first: str, last: str, phone: str, email: str = "", n
             "created_at": datetime.now().isoformat(timespec="seconds"),
         }
     )
+    audit_event(data, "add_client", "client", client_id, {"name": f"{last} {first}".strip(), "phone": phone})
     return True, "Cliente salvato.", client_id
 
 
@@ -348,6 +379,14 @@ def update_client(data: dict, client_id: str, first: str, last: str, phone: str,
     client = get_client(data, client_id)
     if not client:
         return False, "Cliente non trovato."
+    before = {
+        "first_name": client.get("first_name", ""),
+        "last_name": client.get("last_name", ""),
+        "phone": client.get("phone", ""),
+        "email": client.get("email", ""),
+        "birth_date": client.get("birth_date", ""),
+        "notes": client.get("notes", ""),
+    }
     client.update(
         {
             "first_name": first.strip(),
@@ -363,6 +402,23 @@ def update_client(data: dict, client_id: str, first: str, last: str, phone: str,
             booking["name"] = full_name(client)
             booking["phone"] = client.get("phone", "")
             booking["email"] = client.get("email", "")
+    audit_event(
+        data,
+        "update_client",
+        "client",
+        client_id,
+        {
+            "before": before,
+            "after": {
+                "first_name": client.get("first_name", ""),
+                "last_name": client.get("last_name", ""),
+                "phone": client.get("phone", ""),
+                "email": client.get("email", ""),
+                "birth_date": client.get("birth_date", ""),
+                "notes": client.get("notes", ""),
+            },
+        },
+    )
     return True, "Scheda cliente aggiornata."
 
 
@@ -415,6 +471,22 @@ def create_booking(data: dict, client_id: str, day, time: str, amount: float, pa
         "created_by": current_user(),
     }
     data["bookings"].append(booking)
+    audit_event(
+        data,
+        "create_booking",
+        "booking",
+        booking["id"],
+        {
+            "client_id": client_id,
+            "date": booking["date"],
+            "time": time,
+            "instructor": instructor,
+            "amount": amount,
+            "paid": paid,
+            "gift": bool(gift_flag),
+            "status": booking["status"],
+        },
+    )
     return booking
 
 
@@ -439,9 +511,11 @@ def mark_paid(data: dict, booking_id: str):
         return False, "Prenotazione non trovata."
     if is_gift(booking):
         return False, "Seduta omaggio: non c'è incasso."
+    was_paid = yes(booking.get("paid"))
     booking["paid"] = True
     booking["paid_to_gym_at"] = datetime.now().isoformat(timespec="seconds")
     booking["paid_to_gym_by"] = current_user()
+    audit_event(data, "mark_paid", "booking", booking_id, {"was_paid": was_paid, "amount": money(booking.get("amount"))})
     return True, "Incasso registrato."
 
 
@@ -451,12 +525,15 @@ def mark_gift(data: dict, booking_id: str, note: str = ""):
         return False, "Prenotazione non trovata."
     if booking.get("settlement_id"):
         return False, "Quota già chiusa: non modificabile."
+    old_amount = money(booking.get("amount"))
+    old_paid = yes(booking.get("paid"))
     booking.update({"gift": True, "amount": 0.0, "paid": True, "paid_to_gym_at": "", "paid_to_gym_by": current_user()})
     if "omaggio" not in str(booking.get("note", "")).lower():
         log = "Seduta omaggio / prova"
         if note.strip():
             log += f" - {note.strip()}"
         booking["note"] = (booking.get("note", "") + " | " if booking.get("note") else "") + log
+    audit_event(data, "mark_gift", "booking", booking_id, {"old_amount": old_amount, "old_paid": old_paid, "note": note.strip()})
     return True, "Segnata come omaggio."
 
 
@@ -466,6 +543,7 @@ def unmark_gift(data: dict, booking_id: str, amount: float, paid: bool, note: st
         return False, "Prenotazione non trovata."
     if booking.get("settlement_id"):
         return False, "Quota già chiusa: non modificabile."
+    old_note = booking.get("note", "")
     booking.update(
         {
             "gift": False,
@@ -477,6 +555,13 @@ def unmark_gift(data: dict, booking_id: str, amount: float, paid: bool, note: st
     )
     if note.strip():
         booking["note"] = (booking.get("note", "") + " | " if booking.get("note") else "") + note.strip()
+    audit_event(
+        data,
+        "unmark_gift",
+        "booking",
+        booking_id,
+        {"amount": money(amount), "paid": bool(paid), "old_note": old_note, "note": note.strip()},
+    )
     return True, "Omaggio tolto."
 
 
@@ -498,6 +583,7 @@ def update_amount(data: dict, booking_id: str, amount: float, note: str = ""):
         if note.strip():
             log += f" - {note.strip()}"
         booking["note"] = (booking.get("note", "") + " | " if booking.get("note") else "") + log
+    audit_event(data, "update_amount", "booking", booking_id, {"old_amount": old, "new_amount": new, "note": note.strip()})
     return True, "Importo aggiornato."
 
 
@@ -530,6 +616,18 @@ def mark_share(data: dict, booking_id: str):
             "booking_id": booking_id,
         }
     )
+    audit_event(
+        data,
+        "mark_share",
+        "booking",
+        booking_id,
+        {
+            "settlement_id": settlement_id,
+            "gross_amount": amount,
+            "instructor_amount": round(amount * instructor_share(), 2),
+            "gym_amount": round(amount * gym_share(), 2),
+        },
+    )
     return True, "Quota 40% chiusa."
 
 
@@ -544,6 +642,7 @@ def cancel_booking(data: dict, booking_id: str, note: str = ""):
     booking["cancelled_by"] = current_user()
     if note.strip():
         booking["note"] = (booking.get("note", "") + " | " if booking.get("note") else "") + f"Annullata: {note.strip()}"
+    audit_event(data, "cancel_booking", "booking", booking_id, {"note": note.strip()})
     return True, "Prenotazione annullata."
 
 
@@ -1116,4 +1215,5 @@ def run():
     dispatch[section](data, sha)
 
 
-run()
+if __name__ == "__main__":
+    run()
