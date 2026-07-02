@@ -779,17 +779,29 @@ def header():
     st.markdown(
         """
         <style>
-        .main .block-container {max-width: 1350px; padding-top: 1rem;}
-        .bc-header {display:flex; align-items:center; gap:22px; margin-bottom:18px;}
-        .bc-title {font-size:40px; font-weight:800; color:#243142; line-height:1.05;}
+        .main .block-container {max-width: 1380px; padding-top: 1rem; padding-bottom: 2rem;}
+        .bc-header {display:flex; align-items:center; gap:22px; margin-bottom:16px;}
+        .bc-title {font-size:40px; font-weight:800; color:#1F2A37; line-height:1.05;}
         .bc-logo {width:92px; max-height:92px; object-fit:contain;}
-        .day-card {border:1px solid #D8DEE8; border-radius:12px; padding:10px 12px; background:#fff; min-height:86px;}
-        .day-empty {background:#FAFAFA; color:#9AA0A6;}
-        .day-title {font-weight:800; margin-bottom:6px;}
-        .slot {font-size:0.86rem; line-height:1.22; padding:4px 0; border-bottom:1px solid #EEF0F2;}
+        .quick-grid {display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; margin:8px 0 16px;}
+        .quick-card {border:1px solid #D8DEE8; border-radius:8px; padding:12px 14px; background:#fff;}
+        .quick-label {font-size:0.78rem; color:#6B7280; font-weight:700; text-transform:uppercase; letter-spacing:.02em;}
+        .quick-value {font-size:1.35rem; font-weight:800; color:#111827; margin-top:2px;}
+        .quick-note {font-size:0.82rem; color:#6B7280; margin-top:3px;}
+        .day-card {border:1px solid #D8DEE8; border-radius:8px; padding:10px 12px; background:#fff; min-height:92px; box-shadow:0 1px 2px rgba(15,23,42,.04);}
+        .day-empty {background:#FAFAFA; color:#9AA0A6; box-shadow:none;}
+        .day-title {font-weight:800; margin-bottom:7px; color:#1F2A37;}
+        .slot {font-size:0.86rem; line-height:1.28; padding:6px 0; border-bottom:1px solid #EEF0F2;}
         .slot:last-child {border-bottom:0;}
         .muted {color:#6F7782;}
-        @media(max-width: 700px) {.bc-title{font-size:27px}.bc-logo{width:64px}.day-card{min-height:70px}}
+        .pill {display:inline-block; border-radius:999px; padding:1px 7px; font-size:.72rem; font-weight:800; margin-left:4px;}
+        .pill-ok {background:#DCFCE7; color:#166534;}
+        .pill-warn {background:#FEF3C7; color:#92400E;}
+        .pill-gift {background:#EDE9FE; color:#5B21B6;}
+        .pill-free {background:#E0F2FE; color:#075985;}
+        div[data-testid="stMetric"] {background:#fff; border:1px solid #E5E7EB; border-radius:8px; padding:10px 12px;}
+        .stButton > button {border-radius:8px; font-weight:700;}
+        @media(max-width: 700px) {.bc-title{font-size:27px}.bc-logo{width:64px}.day-card{min-height:70px}.quick-grid{grid-template-columns:1fr}}
         </style>
         """,
         unsafe_allow_html=True,
@@ -829,6 +841,40 @@ def render_downloads(label: str, df: pd.DataFrame, base_name: str):
     col1, col2 = st.columns(2)
     col1.download_button(f"Scarica PDF {label}", data=pdf_bytes(label, df), file_name=f"{base_name}.pdf", mime="application/pdf", use_container_width=True)
     col2.download_button(f"Scarica Excel {label}", data=to_excel_bytes(df), file_name=f"{base_name}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+
+
+def render_quick_actions():
+    c1, c2, c3, c4 = st.columns(4)
+    if c1.button("Nuova prenotazione", type="primary", use_container_width=True):
+        navigate("Prenota")
+    if c2.button("Vai a Incassi", use_container_width=True):
+        navigate("Incassi")
+    if c3.button("Clienti", use_container_width=True):
+        navigate("Clienti")
+    if is_admin() and c4.button("Archivio", use_container_width=True):
+        navigate("Archivio")
+
+
+def render_dashboard(data: dict, instructor: str = ""):
+    today_key = date.today().isoformat()
+    rows = [b for b in data.get("bookings", []) if b.get("status") != "Annullata" and (not instructor or b.get("instructor") == instructor)]
+    today_rows = [b for b in rows if b.get("date") == today_key]
+    upcoming = planning_rows(data, 14, instructor)
+    unpaid = [b for b in open_rows(data, instructor) if not is_gift(b) and not yes(b.get("paid"))]
+    paid_open_share = [b for b in open_rows(data, instructor) if not is_gift(b) and yes(b.get("paid")) and not b.get("settlement_id")]
+    gifts = [b for b in upcoming if is_gift(b)]
+
+    st.markdown(
+        f"""
+        <div class="quick-grid">
+          <div class="quick-card"><div class="quick-label">Oggi</div><div class="quick-value">{len(today_rows)}</div><div class="quick-note">lezioni/prenotazioni attive</div></div>
+          <div class="quick-card"><div class="quick-label">Prossimi 14 giorni</div><div class="quick-value">{len(upcoming)}</div><div class="quick-note">prenotazioni in agenda</div></div>
+          <div class="quick-card"><div class="quick-label">Da incassare</div><div class="quick-value">€ {sum(money(b.get("amount")) for b in unpaid):.2f}</div><div class="quick-note">{len(unpaid)} movimenti aperti</div></div>
+          <div class="quick-card"><div class="quick-label">Quote 40%</div><div class="quick-value">{len(paid_open_share)}</div><div class="quick-note">da chiudere · {len(gifts)} omaggi</div></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def render_booking(data, sha):
@@ -961,13 +1007,6 @@ def render_cash(data, sha):
                 else:
                     st.error(msg)
 
-    st.markdown("### Elenchi")
-    with st.expander("Da incassare", expanded=True):
-        st.dataframe(booking_dataframe(unpaid), use_container_width=True, hide_index=True) if unpaid else st.success("Nessun importo da incassare.")
-    with st.expander("Incassati dalla palestra", expanded=True):
-        st.dataframe(booking_dataframe(paid), use_container_width=True, hide_index=True) if paid else st.info("Nessun incasso registrato.")
-    with st.expander("Sedute omaggio", expanded=True):
-        st.dataframe(booking_dataframe(gift_rows), use_container_width=True, hide_index=True) if gift_rows else st.info("Nessuna seduta omaggio.")
     history = []
     for s in data.get("settlements", []):
         if instructor and s.get("instructor") != instructor:
@@ -982,7 +1021,16 @@ def render_cash(data, sha):
                 "Chiusa da": s.get("closed_by", ""),
             }
         )
-    with st.expander("Storico quote già chiuse", expanded=True):
+
+    st.markdown("### Elenchi incassi")
+    tab_unpaid, tab_paid, tab_gifts, tab_history = st.tabs(["Da incassare", "Incassati", "Omaggi", "Quote chiuse"])
+    with tab_unpaid:
+        st.dataframe(booking_dataframe(unpaid), use_container_width=True, hide_index=True) if unpaid else st.success("Nessun importo da incassare.")
+    with tab_paid:
+        st.dataframe(booking_dataframe(paid), use_container_width=True, hide_index=True) if paid else st.info("Nessun incasso registrato.")
+    with tab_gifts:
+        st.dataframe(booking_dataframe(gift_rows), use_container_width=True, hide_index=True) if gift_rows else st.info("Nessuna seduta omaggio.")
+    with tab_history:
         st.dataframe(pd.DataFrame(history), use_container_width=True, hide_index=True) if history else st.info("Nessuna quota chiusa.")
 
 
@@ -1038,12 +1086,17 @@ def render_planning_grid(rows: list, title: str, days: int = PLANNING_DAYS, show
         for (time, instructor), group in sorted(grouped.items(), key=lambda item: item[0]):
             confirmed_rows = [r for r in group if r.get("status") == "Confermata"]
             waiting_rows = [r for r in group if r.get("status") == "Lista attesa"]
+            gift_count = len([r for r in group if is_gift(r)])
+            free_spots = max(CAPACITY - len(confirmed_rows), 0)
             names = ", ".join([r.get("name", "") + (" (omaggio)" if is_gift(r) else "") for r in confirmed_rows]) or "—"
             instructor_html = f" <span class='muted'>{instructor}</span>" if show_instructor and instructor else ""
-            waiting = f" · att {len(waiting_rows)}" if waiting_rows else ""
+            waiting = f"<span class='pill pill-warn'>att {len(waiting_rows)}</span>" if waiting_rows else ""
+            gift = f"<span class='pill pill-gift'>{gift_count} omaggio</span>" if gift_count else ""
+            free = f"<span class='pill pill-free'>{free_spots} liberi</span>"
+            status = "<span class='pill pill-ok'>pieno</span>" if free_spots == 0 else free
             lines.append(
                 f"<div class='slot'><b>{time}</b>{instructor_html} "
-                f"<span class='muted'>{len(confirmed_rows)}/{CAPACITY} · lib {max(CAPACITY - len(confirmed_rows), 0)}{waiting}</span><br>"
+                f"<span class='muted'>{len(confirmed_rows)}/{CAPACITY}</span> {status}{waiting}{gift}<br>"
                 f"<small>{names}</small></div>"
             )
         body = "".join(lines) if lines else "<div class='muted'>—</div>"
@@ -1063,12 +1116,15 @@ def render_planning_grid(rows: list, title: str, days: int = PLANNING_DAYS, show
 def render_planning(data, sha):
     st.subheader("Planning 3 mesi")
     pdf_scope = "" if is_admin() else current_instructor()
+    render_dashboard(data, pdf_scope)
+    render_quick_actions()
+
     pdf_rows = planning_rows(data, PLANNING_DAYS, pdf_scope)
     df = booking_dataframe(pdf_rows)
-    render_downloads("planning", df, "planning_3_mesi")
 
-    if st.button("Apri Incassi", type="primary"):
-        navigate("Incassi")
+    with st.expander("Download planning", expanded=False):
+        render_downloads("planning", df, "planning_3_mesi")
+
     cancel_box(data, sha)
 
     if is_admin():
