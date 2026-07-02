@@ -28,15 +28,24 @@ def run():
     if st.session_state.get("section") not in allowed:
         st.session_state["section"] = "Planning"
 
-    section = st.radio("Sezione", allowed, horizontal=True, key="section", label_visibility="collapsed")
-    c1, c2 = st.columns([4, 1])
-    c1.caption(f"Accesso: {current_user().capitalize()} ?? {'Admin' if is_admin() else 'Istruttrice'}")
-    if c2.button("Logout", use_container_width=True):
-        for key in ["authenticated", "current_user", "current_role", "section", "_next_section", "edit_client_id", "booking_client_id"]:
-            st.session_state.pop(key, None)
-        st.rerun()
+    with st.sidebar:
+        st.markdown("### Menu")
+        st.caption(f"Accesso: {current_user().capitalize()} · {'Admin' if is_admin() else 'Istruttrice'}")
+        if st.button("Logout", use_container_width=True):
+            for key in [
+                "authenticated",
+                "current_user",
+                "current_role",
+                "section",
+                "_next_section",
+                "edit_client_id",
+                "booking_client_id",
+            ]:
+                st.session_state.pop(key, None)
+            st.rerun()
 
-    st.divider()
+        section = st.radio("Sezione", allowed, key="section", label_visibility="collapsed")
+
     dispatch = {
         "Planning": render_planning,
         "Prenota": render_booking,
