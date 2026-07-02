@@ -3,8 +3,8 @@ from datetime import date, timedelta
 import streamlit as st
 
 from auth import current_instructor, is_admin, navigate
-from components.ui import render_downloads
-from config import CAPACITY, INSTRUCTORS, PLANNING_DAYS, date_label, date_it, money, yes, is_gift
+from components.ui import render_booking_cards, render_downloads, render_table_expander
+from config import CAPACITY, INSTRUCTORS, PLANNING_DAYS, date_label, date_it, is_gift, money, parse_date, yes
 from storage import (
     booking_dataframe, cancel_booking, open_rows, planning_rows, row_label, save_data,
 )
@@ -34,8 +34,8 @@ def render_dashboard(data: dict, instructor: str = ""):
         <div class="quick-grid">
           <div class="quick-card"><div class="quick-label">Oggi</div><div class="quick-value">{len(today_rows)}</div><div class="quick-note">lezioni/prenotazioni attive</div></div>
           <div class="quick-card"><div class="quick-label">Prossimi 14 giorni</div><div class="quick-value">{len(upcoming)}</div><div class="quick-note">prenotazioni in agenda</div></div>
-          <div class="quick-card"><div class="quick-label">Da incassare</div><div class="quick-value">€ {sum(money(b.get("amount")) for b in unpaid):.2f}</div><div class="quick-note">{len(unpaid)} movimenti aperti</div></div>
-          <div class="quick-card"><div class="quick-label">Quote 40%</div><div class="quick-value">{len(paid_open_share)}</div><div class="quick-note">da chiudere · {len(gifts)} omaggi</div></div>
+          <div class="quick-card"><div class="quick-label">Da incassare</div><div class="quick-value">â‚¬ {sum(money(b.get("amount")) for b in unpaid):.2f}</div><div class="quick-note">{len(unpaid)} movimenti aperti</div></div>
+          <div class="quick-card"><div class="quick-label">Quote 40%</div><div class="quick-value">{len(paid_open_share)}</div><div class="quick-note">da chiudere Â· {len(gifts)} omaggi</div></div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -94,7 +94,7 @@ def render_planning_grid(rows: list, title: str, days: int = PLANNING_DAYS, show
             waiting_rows = [r for r in group if r.get("status") == "Lista attesa"]
             gift_count = len([r for r in group if is_gift(r)])
             free_spots = max(CAPACITY - len(confirmed_rows), 0)
-            names = ", ".join([r.get("name", "") + (" (omaggio)" if is_gift(r) else "") for r in confirmed_rows]) or "—"
+            names = ", ".join([r.get("name", "") + (" (omaggio)" if is_gift(r) else "") for r in confirmed_rows]) or "â€”"
             instructor_html = f" <span class='muted'>{instructor}</span>" if show_instructor and instructor else ""
             waiting = f"<span class='pill pill-warn'>att {len(waiting_rows)}</span>" if waiting_rows else ""
             gift = f"<span class='pill pill-gift'>{gift_count} omaggio</span>" if gift_count else ""
@@ -105,18 +105,16 @@ def render_planning_grid(rows: list, title: str, days: int = PLANNING_DAYS, show
                 f"<span class='muted'>{len(confirmed_rows)}/{CAPACITY}</span> {status}{waiting}{gift}<br>"
                 f"<small>{names}</small></div>"
             )
-        body = "".join(lines) if lines else "<div class='muted'>—</div>"
+        body = "".join(lines) if lines else "<div class='muted'>â€”</div>"
         cls = "day-card day-empty" if not lines else "day-card"
         cards.append(f"<div class='{cls}'><div class='day-title'>{date_label(day_key)}</div>{body}</div>")
 
-    st.markdown("<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px'>" + "".join(cards) + "</div>", unsafe_allow_html=True)
+    st.markdown("<div class='day-grid'>" + "".join(cards) + "</div>", unsafe_allow_html=True)
 
     df = booking_dataframe(rows)
     with st.expander("Elenco rapido", expanded=False):
-        if df.empty:
-            st.info("Nessuna prenotazione nel periodo.")
-        else:
-            st.dataframe(df, use_container_width=True, hide_index=True)
+        render_booking_cards(rows, "Nessuna prenotazione nel periodo.")
+        render_table_expander("Tabella completa", df, "Nessuna prenotazione nel periodo.")
 
 def render_planning(data, sha):
     st.subheader("Planning 3 mesi")
@@ -143,3 +141,4 @@ def render_planning(data, sha):
             render_planning_grid(planning_rows(data, PLANNING_DAYS, ""), "Planning completo", PLANNING_DAYS, True)
         with tab_mine:
             render_planning_grid(planning_rows(data, PLANNING_DAYS, instructor), f"Prossimi impegni {instructor}", PLANNING_DAYS, False)
+

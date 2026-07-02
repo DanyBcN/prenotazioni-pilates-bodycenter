@@ -1,6 +1,6 @@
 import streamlit as st
 
-from components.ui import render_downloads
+from components.ui import render_booking_cards, render_downloads, render_table_expander
 from storage import booking_dataframe
 
 def render_search(data):
@@ -13,4 +13,6 @@ def render_search(data):
             rows.append(b)
     df = booking_dataframe(rows)
     render_downloads("ricerca", df, "ricerca_prenotazioni")
-    st.dataframe(df, use_container_width=True, hide_index=True) if not df.empty else st.info("Nessun risultato.")
+    render_booking_cards(rows, "Nessun risultato.")
+    render_table_expander("Tabella risultati", df, "Nessun risultato.")
+

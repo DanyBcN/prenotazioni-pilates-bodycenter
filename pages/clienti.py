@@ -2,6 +2,7 @@ import pandas as pd
 import streamlit as st
 
 from auth import navigate
+from components.ui import render_client_cards, render_table_expander
 from config import full_name
 from storage import (
     add_client, client_options, get_client, option_to_client_id, save_data, update_client,
@@ -41,7 +42,8 @@ def render_clients(data, sha):
             for c in clients
         ]
     )
-    st.dataframe(clients_df, use_container_width=True, hide_index=True) if not clients_df.empty else st.info("Nessun cliente.")
+    render_client_cards(clients, "Nessun cliente.")
+    render_table_expander("Tabella clienti", clients_df, "Nessun cliente.")
 
     st.markdown("### Modifica scheda cliente")
     options = client_options(data)
@@ -79,3 +81,6 @@ def render_clients(data, sha):
             navigate("Clienti")
         else:
             st.error(msg)
+
+
+
