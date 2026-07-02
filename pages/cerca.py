@@ -4,7 +4,7 @@ from components.ui import page_header, render_booking_cards, render_downloads, r
 from storage import booking_dataframe
 
 def render_search(data):
-    page_header("Cerca", "Trova rapidamente prenotazioni per cliente, telefono, email, istruttrice, nota o data.", "Ricerca")
+    page_header("Cerca", "Ricerca trasversale su clienti, telefono, email, istruttrice, note, date e orari.", "Ricerca")
     query = st.text_input("Cerca cliente, telefono, email, istruttrice, nota, data, ora").strip().lower()
     rows = []
     for b in data["bookings"]:

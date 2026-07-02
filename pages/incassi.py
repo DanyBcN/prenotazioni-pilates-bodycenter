@@ -126,7 +126,7 @@ def render_cash(data, sha):
     month_options = ["Tutti", *[month_label(m) for m in month_keys]]
     month_lookup = {month_label(m): m for m in month_keys}
 
-    page_header("Incassi", "Controlla pagamenti, omaggi e quote 40/60 con filtri operativi chiari.", "Contabilita")
+    page_header("Incassi", "Dashboard operativa per pagamenti, omaggi e quote 40/60 con filtri immediati.", "Contabilita")
     with st.container(border=True):
         c1, c2, c3 = st.columns(3)
         if is_admin():

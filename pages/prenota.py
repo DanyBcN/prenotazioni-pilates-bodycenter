@@ -11,7 +11,7 @@ from storage import (
 )
 
 def render_booking(data, sha):
-    page_header("Prenota", "Crea una prenotazione scegliendo cliente, data, orario e istruttrice.", "Nuova prenotazione")
+    page_header("Prenota", "Percorso guidato: scegli il cliente, controlla i posti e salva la lezione in pochi passaggi.", "Nuova prenotazione")
     st.markdown("<div class='bc-section-title'>Cliente</div>", unsafe_allow_html=True)
     mode = st.radio("Cliente", ["Seleziona da archivio", "Nuovo cliente"], horizontal=True)
     client_id = None

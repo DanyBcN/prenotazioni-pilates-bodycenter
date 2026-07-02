@@ -29,8 +29,20 @@ def run():
         st.session_state["section"] = "Planning"
 
     with st.sidebar:
-        st.markdown("### Menu")
+        st.markdown(
+            """
+            <div class="sidebar-brand">
+              <div class="sidebar-kicker">Body Center</div>
+              <div class="sidebar-title">Pilates Reformer</div>
+              <div class="sidebar-subtitle">Gestionale staff</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         st.caption(f"Accesso: {current_user().capitalize()} - {'Admin' if is_admin() else 'Istruttrice'}")
+        st.markdown("<div class='sidebar-menu-label'>Menu</div>", unsafe_allow_html=True)
+        section = st.radio("Sezione", allowed, key="section", label_visibility="collapsed")
+        st.markdown("---")
         if st.button("Logout", use_container_width=True):
             for key in [
                 "authenticated",
@@ -43,8 +55,6 @@ def run():
             ]:
                 st.session_state.pop(key, None)
             st.rerun()
-
-        section = st.radio("Sezione", allowed, key="section", label_visibility="collapsed")
 
     dispatch = {
         "Planning": render_planning,

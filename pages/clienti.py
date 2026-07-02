@@ -9,7 +9,7 @@ from storage import (
 )
 
 def render_clients(data, sha):
-    page_header("Clienti", "Archivio clienti con schede modificabili e contatti sempre a portata di mano.", "Anagrafica")
+    page_header("Clienti", "Anagrafica chiara, card contatto e schede modificabili senza perdere il contesto.", "Anagrafica")
 
     with st.expander("Aggiungi cliente", expanded=False):
         c1, c2 = st.columns(2)

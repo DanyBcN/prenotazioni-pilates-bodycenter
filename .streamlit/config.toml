@@ -3,3 +3,10 @@ magicEnabled = false
 
 [client]
 showSidebarNavigation = false
+
+[theme]
+primaryColor = "#3F6F56"
+backgroundColor = "#F7FBF7"
+secondaryBackgroundColor = "#EAF4ED"
+textColor = "#17211B"
+font = "sans serif"

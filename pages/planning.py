@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from html import escape
 
 import streamlit as st
 
@@ -8,16 +9,27 @@ from config import CAPACITY, INSTRUCTORS, PLANNING_DAYS, date_label, is_gift, mo
 from storage import booking_dataframe, cancel_booking, open_rows, planning_rows, row_label, save_data
 
 
+def action_tile(label: str, note: str, target: str, primary: bool = False):
+    if st.button(label, type="primary" if primary else "secondary", use_container_width=True):
+        navigate(target)
+    st.caption(note)
+
+
 def render_quick_actions():
+    st.markdown("<div class='bc-section-title'>Azioni rapide</div>", unsafe_allow_html=True)
     c1, c2, c3, c4 = st.columns(4)
-    if c1.button("Nuova prenotazione", type="primary", use_container_width=True):
-        navigate("Prenota")
-    if c2.button("Vai a Incassi", use_container_width=True):
-        navigate("Incassi")
-    if c3.button("Clienti", use_container_width=True):
-        navigate("Clienti")
-    if is_admin() and c4.button("Archivio", use_container_width=True):
-        navigate("Archivio")
+    with c1:
+        action_tile("Nuova prenotazione", "Aggiungi subito una lezione", "Prenota", True)
+    with c2:
+        action_tile("Incassi", "Pagamenti e quote 40%", "Incassi")
+    with c3:
+        action_tile("Clienti", "Archivio e schede", "Clienti")
+    with c4:
+        if is_admin():
+            action_tile("Archivio", "Storico completo", "Archivio")
+        else:
+            st.button("Archivio", use_container_width=True, disabled=True)
+            st.caption("Solo admin")
 
 
 def render_dashboard(data: dict, instructor: str = ""):
@@ -32,9 +44,9 @@ def render_dashboard(data: dict, instructor: str = ""):
     st.markdown(
         f"""
         <div class="quick-grid">
-          <div class="quick-card"><div class="quick-label">Oggi</div><div class="quick-value">{len(today_rows)}</div><div class="quick-note">lezioni/prenotazioni attive</div></div>
-          <div class="quick-card"><div class="quick-label">Prossimi {PLANNING_DAYS} giorni</div><div class="quick-value">{len(upcoming)}</div><div class="quick-note">prenotazioni in agenda</div></div>
-          <div class="quick-card"><div class="quick-label">Da incassare</div><div class="quick-value">EUR {sum(money(b.get('amount')) for b in unpaid):.2f}</div><div class="quick-note">{len(unpaid)} movimenti aperti</div></div>
+          <div class="quick-card"><div class="quick-label">Oggi</div><div class="quick-value">{len(today_rows)}</div><div class="quick-note">prenotazioni attive</div></div>
+          <div class="quick-card"><div class="quick-label">Prossimi {PLANNING_DAYS} giorni</div><div class="quick-value">{len(upcoming)}</div><div class="quick-note">in agenda</div></div>
+          <div class="quick-card bc-attention"><div class="quick-label">Da incassare</div><div class="quick-value">EUR {sum(money(b.get('amount')) for b in unpaid):.2f}</div><div class="quick-note">{len(unpaid)} movimenti aperti</div></div>
           <div class="quick-card"><div class="quick-label">Quote 40%</div><div class="quick-value">{len(paid_open_share)}</div><div class="quick-note">da chiudere - {len(gifts)} omaggi</div></div>
         </div>
         """,
@@ -71,8 +83,20 @@ def cancel_box(data, sha):
                 st.error(msg)
 
 
+def day_class(groups: dict) -> str:
+    if not groups:
+        return "day-card day-empty"
+    confirmed = sum(len([r for r in group if r.get("status") == "Confermata"]) for group in groups.values())
+    capacity_total = max(len(groups), 1) * CAPACITY
+    if confirmed >= capacity_total:
+        return "day-card day-full"
+    if confirmed >= capacity_total * 0.7:
+        return "day-card day-busy"
+    return "day-card day-open"
+
+
 def render_planning_grid(rows: list, title: str, days: int = PLANNING_DAYS, show_instructor: bool = True):
-    st.markdown(f"### {title}")
+    st.markdown(f"<div class='bc-section-title'>{escape(title)}</div>", unsafe_allow_html=True)
     today = date.today()
     all_days = [(today + timedelta(days=i)).isoformat() for i in range(days)]
     by_day = {d: [] for d in all_days}
@@ -82,7 +106,7 @@ def render_planning_grid(rows: list, title: str, days: int = PLANNING_DAYS, show
     c1, c2, c3 = st.columns(3)
     c1.metric("Oggi", len([r for r in rows if r.get("date") == today.isoformat()]))
     c2.metric(f"Prossimi {days} giorni", len(rows))
-    c3.metric("Omaggio", len([r for r in rows if is_gift(r)]))
+    c3.metric("Omaggi", len([r for r in rows if is_gift(r)]))
 
     cards = []
     for day_key in all_days:
@@ -91,25 +115,36 @@ def render_planning_grid(rows: list, title: str, days: int = PLANNING_DAYS, show
             grouped.setdefault((row.get("time", ""), row.get("instructor", "")), []).append(row)
 
         lines = []
+        day_confirmed = 0
+        day_waiting = 0
+        day_gifts = 0
         for (time, instructor), group in sorted(grouped.items(), key=lambda item: item[0]):
             confirmed_rows = [r for r in group if r.get("status") == "Confermata"]
             waiting_rows = [r for r in group if r.get("status") == "Lista attesa"]
             gift_count = len([r for r in group if is_gift(r)])
+            day_confirmed += len(confirmed_rows)
+            day_waiting += len(waiting_rows)
+            day_gifts += gift_count
             free_spots = max(CAPACITY - len(confirmed_rows), 0)
-            names = ", ".join([r.get("name", "") + (" (omaggio)" if is_gift(r) else "") for r in confirmed_rows]) or "-"
-            instructor_html = f" <span class='muted'>{instructor}</span>" if show_instructor and instructor else ""
-            waiting = f"<span class='pill pill-warn'>att {len(waiting_rows)}</span>" if waiting_rows else ""
+            names = ", ".join([escape(r.get("name", "")) + (" (omaggio)" if is_gift(r) else "") for r in confirmed_rows]) or "posti disponibili"
+            instructor_html = f" <span class='muted'>{escape(instructor)}</span>" if show_instructor and instructor else ""
+            waiting = f"<span class='pill pill-warn'>attesa {len(waiting_rows)}</span>" if waiting_rows else ""
             gift = f"<span class='pill pill-gift'>{gift_count} omaggio</span>" if gift_count else ""
             free = f"<span class='pill pill-free'>{free_spots} liberi</span>"
             status = "<span class='pill pill-ok'>pieno</span>" if free_spots == 0 else free
             lines.append(
-                f"<div class='slot'><b>{time}</b>{instructor_html} "
+                f"<div class='slot'><span class='slot-time'>{escape(time)}</span>{instructor_html} "
                 f"<span class='muted'>{len(confirmed_rows)}/{CAPACITY}</span> {status}{waiting}{gift}<br>"
                 f"<small>{names}</small></div>"
             )
-        body = "".join(lines) if lines else "<div class='muted'>-</div>"
-        cls = "day-card day-empty" if not lines else "day-card"
-        cards.append(f"<div class='{cls}'><div class='day-title'>{date_label(day_key)}</div>{body}</div>")
+        body = "".join(lines) if lines else "<div class='muted'>Nessuna prenotazione</div>"
+        cls = day_class(grouped)
+        badge = f"{day_confirmed} pren."
+        if day_waiting:
+            badge += f" / {day_waiting} att."
+        if day_gifts:
+            badge += f" / {day_gifts} om."
+        cards.append(f"<div class='{cls}'><div class='day-title'><span>{escape(date_label(day_key))}</span><span class='day-count'>{escape(badge)}</span></div>{body}</div>")
 
     st.markdown("<div class='day-grid'>" + "".join(cards) + "</div>", unsafe_allow_html=True)
 
@@ -120,7 +155,7 @@ def render_planning_grid(rows: list, title: str, days: int = PLANNING_DAYS, show
 
 
 def render_planning(data, sha):
-    page_header("Planning 3 mesi", "Vista rapida dei prossimi 92 giorni, posti disponibili e prenotazioni in lista attesa.", "Agenda")
+    page_header("Planning 3 mesi", "Agenda colorata dei prossimi 92 giorni: verde per disponibilita, giallo per quasi pieno, rosso per pieno.", "Agenda")
     pdf_scope = "" if is_admin() else current_instructor()
     render_dashboard(data, pdf_scope)
     render_quick_actions()

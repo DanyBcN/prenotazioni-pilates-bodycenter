@@ -4,7 +4,7 @@ from components.ui import page_header, render_booking_cards, render_downloads, r
 from storage import booking_dataframe
 
 def render_archive(data, sha):
-    page_header("Archivio prenotazioni", "Storico completo consultabile con card compatte, tabella e download.", "Archivio")
+    page_header("Archivio prenotazioni", "Storico completo con riepilogo, card compatte, tabella e download esportabili.", "Archivio")
     rows = sorted(data["bookings"], key=lambda b: (b.get("date", ""), b.get("time", ""), b.get("instructor", ""), b.get("name", "")), reverse=True)
     df = booking_dataframe(rows)
     c1, c2, c3 = st.columns(3)
