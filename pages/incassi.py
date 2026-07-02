@@ -9,6 +9,7 @@ from storage import (
     unmark_gift, update_amount,
 )
 
+
 def render_cash(data, sha):
     instructor = "" if is_admin() else current_instructor()
     rows = open_rows(data, instructor)
@@ -25,15 +26,15 @@ def render_cash(data, sha):
 
     st.subheader("Incassi")
     m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Totale aperto", f"â‚¬ {total_open:.2f}")
-    m2.metric("Da incassare", f"â‚¬ {to_collect:.2f}")
-    m3.metric("Incassato palestra", f"â‚¬ {collected:.2f}")
-    m4.metric("40% da dare" if is_admin() else "Tuo 40% da ricevere", f"â‚¬ {quota_open:.2f}")
+    m1.metric("Totale aperto", f"EUR {total_open:.2f}")
+    m2.metric("Da incassare", f"EUR {to_collect:.2f}")
+    m3.metric("Incassato palestra", f"EUR {collected:.2f}")
+    m4.metric("40% da dare" if is_admin() else "Tuo 40% da ricevere", f"EUR {quota_open:.2f}")
     m5.metric("Omaggio", len(gift_rows))
     if is_admin():
-        st.info(f"Quote istruttrici: da dare â‚¬ {quota_open:.2f} Â· giÃ  pagate â‚¬ {quota_closed:.2f}")
+        st.info(f"Quote istruttrici: da dare EUR {quota_open:.2f} - gia pagate EUR {quota_closed:.2f}")
     else:
-        st.info(f"Quota {current_instructor()}: da ricevere â‚¬ {quota_open:.2f} Â· giÃ  ricevuto â‚¬ {quota_closed:.2f}")
+        st.info(f"Quota {current_instructor()}: da ricevere EUR {quota_open:.2f} - gia ricevuto EUR {quota_closed:.2f}")
 
     st.markdown("### Azione unica")
     all_rows = sorted(rows, key=lambda b: (b.get("date", ""), b.get("time", ""), b.get("name", "")))
@@ -47,7 +48,7 @@ def render_cash(data, sha):
             was_gift = is_gift(selected)
             c1, c2, c3 = st.columns(3)
             gift_now = c1.checkbox("Seduta omaggio / prova", value=was_gift, key=f"gift_{booking_id}")
-            new_amount = c2.number_input("Importo totale (â‚¬)", min_value=0.0, value=0.0 if gift_now else float(money(selected.get("amount"))), step=1.0, format="%.2f", disabled=gift_now, key=f"amount_{booking_id}")
+            new_amount = c2.number_input("Importo totale (EUR)", min_value=0.0, value=0.0 if gift_now else float(money(selected.get("amount"))), step=1.0, format="%.2f", disabled=gift_now, key=f"amount_{booking_id}")
             paid_now = c3.checkbox("Incassato palestra", value=True if gift_now else yes(selected.get("paid")), disabled=gift_now, key=f"paid_{booking_id}")
             note = st.text_input("Nota opzionale", key=f"note_{booking_id}")
             if st.button("Salva", type="primary", key=f"save_cash_{booking_id}"):
@@ -71,8 +72,8 @@ def render_cash(data, sha):
         if not payable:
             st.info("Nessuna quota da chiudere.")
         else:
-            q_idx = st.selectbox("Prenotazione quota", range(len(payable)), format_func=lambda i: row_label(payable[i]) + f" Â· quota â‚¬ {money(payable[i].get('amount')) * instructor_share():.2f}")
-            label = "Segna quota 40% pagata ad Alice/Grazia" if is_admin() else "Segna quota 40% ricevuta"
+            q_idx = st.selectbox("Prenotazione quota", range(len(payable)), format_func=lambda i: row_label(payable[i]) + f" - quota EUR {money(payable[i].get('amount')) * instructor_share():.2f}")
+            label = "Segna quota 40% pagata" if is_admin() else "Segna quota 40% ricevuta"
             if st.button(label, type="primary"):
                 ok, msg = mark_share(data, payable[q_idx].get("id"))
                 if ok:
@@ -115,8 +116,8 @@ def render_cash(data, sha):
                 + "".join(
                     f"<div class='bc-booking-card'><div class='bc-card-title'>{row['Istruttrice']}</div>"
                     f"<div class='bc-card-meta'>{row['Data']}</div>"
-                    f"<div class='bc-card-meta'>Lordo EUR {row['Lordo']:.2f} · Quota 40% EUR {row['Quota 40%']:.2f}</div>"
-                    f"<div class='bc-card-meta'>Body Center 60% EUR {row['Body Center 60%']:.2f} · {row['Chiusa da']}</div></div>"
+                    f"<div class='bc-card-meta'>Lordo EUR {row['Lordo']:.2f} - Quota 40% EUR {row['Quota 40%']:.2f}</div>"
+                    f"<div class='bc-card-meta'>Body Center 60% EUR {row['Body Center 60%']:.2f} - {row['Chiusa da']}</div></div>"
                     for row in history
                 )
                 + "</div>",
@@ -125,5 +126,3 @@ def render_cash(data, sha):
         else:
             st.info("Nessuna quota chiusa.")
         render_table_expander("Tabella quote chiuse", history_df, "Nessuna quota chiusa.")
-
-
