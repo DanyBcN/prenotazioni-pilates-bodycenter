@@ -816,5 +816,33 @@
       "created_at": "2026-07-01T04:50:08"
     }
   ],
-  "settlements": []
+  "settlements": [],
+  "audit_log": [
+    {
+      "id": "audit_20260702082926652419",
+      "created_at": "2026-07-02T08:29:26",
+      "user": "grazia",
+      "action": "update_client",
+      "target_type": "client",
+      "target_id": "c_20260625121936143241",
+      "details": {
+        "before": {
+          "first_name": "Giorgio",
+          "last_name": "Benedetto",
+          "phone": "+39 3312979229",
+          "email": "benedettogiorgio62@gmail.com",
+          "birth_date": "17/08/1962",
+          "notes": ""
+        },
+        "after": {
+          "first_name": "Giorgio",
+          "last_name": "Benedetto",
+          "phone": "+39 3312979229",
+          "email": "benedettogiorgio62@gmail.com",
+          "birth_date": "17/08/1962",
+          "notes": ""
+        }
+      }
+    }
+  ]
 }
